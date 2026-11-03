@@ -6,7 +6,7 @@
 <p align="center">
   <a href="https://github.com/ayokiru/modrelease/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/ayokiru/modrelease/test.yml?branch=main&style=flat-square&label=tests" alt="Tests"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-1E293B?style=flat-square" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-1E293B?style=flat-square" alt="Windows, Linux and macOS">
+  <img src="https://img.shields.io/badge/Windows%20%C2%B7%20Linux-1E293B?style=flat-square" alt="Windows and Linux">
   <a href="#github-action"><img src="https://img.shields.io/badge/GitHub%20Action-ready-16A34A?style=flat-square" alt="GitHub Action"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=flat-square" alt="MIT license"></a>
 </p>
