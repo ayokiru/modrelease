@@ -1,0 +1,35 @@
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet .
+      - run: python -m unittest -v
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make a small mod
+        run: |
+          mkdir -p demo/Paks && echo "mod data" > demo/Paks/zzz_Demo_P.pak
+          printf 'source = "demo"\noutput = "dist/Demo-{version}.zip"\nversion = "1.0"\nprefix = "Game/Content/Paks/~mods"\n' > modrelease.toml
+      - uses: ./
+        with:
+          args: pack
+      - name: The zip is there and reproducible
+        run: |
+          test -f dist/Demo-1.0.zip && test -f dist/Demo-1.0.zip.sha256
+          first=$(sha256sum dist/Demo-1.0.zip | cut -d' ' -f1)
+          modrelease pack && test "$first" = "$(sha256sum dist/Demo-1.0.zip | cut -d' ' -f1)"

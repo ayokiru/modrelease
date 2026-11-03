@@ -64,7 +64,9 @@ def fixed_date() -> tuple[int, int, int, int, int, int]:
 
 def personal_terms(extra: list[str] = ()) -> list[str]:
     """Strings that identify the machine or the person: login, computer name, git name and email, plus --term values."""
-    terms = [getpass.getuser(), socket.gethostname(), Path.home().name, *extra]
+    # on a CI runner the login ("runner") and host name are the build machine's, not yours: only --term/config count
+    machine = [] if os.environ.get("CI") else [getpass.getuser(), socket.gethostname(), Path.home().name]
+    terms = [*machine, *extra]
     for key in ("user.email", "user.name"):
         try:
             out = subprocess.run(["git", "config", "--global", key], capture_output=True, text=True, timeout=5).stdout

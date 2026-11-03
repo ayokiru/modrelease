@@ -90,6 +90,15 @@ class SecretAndDevFileTests(unittest.TestCase):
         self.assertEqual([n.file for n in notes], ["Saved/"])  # one note per folder, not per file
 
 
+class CITests(unittest.TestCase):
+    def test_runner_login_is_not_a_term(self):
+        import getpass
+        with mock.patch.dict("os.environ", {"CI": "true"}):
+            terms = pack.personal_terms(["Jane Roe"])
+        self.assertIn("Jane Roe", terms)
+        self.assertNotIn(getpass.getuser(), terms)
+
+
 class ConfigTests(Tmp):
     def test_pack_from_config(self):
         m = self.mod()

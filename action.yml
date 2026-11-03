@@ -1,0 +1,31 @@
+name: modrelease
+description: Check a game mod for personal data and secrets, pack a reproducible zip, upload it to Nexus Mods
+author: ayokiru
+branding:
+  icon: package
+  color: red
+inputs:
+  args:
+    description: >
+      The modrelease command line, for example `pack` (settings from modrelease.toml),
+      `pack MyMod -o dist/MyMod.zip`, or `nexus --mod-version 1.2` (needs NEXUS_API_KEY in env)
+    default: pack
+  python-version:
+    description: Python to run modrelease with (3.11 or newer)
+    default: "3.12"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install modrelease
+      shell: bash
+      run: python -m pip install --quiet "$GITHUB_ACTION_PATH"
+    - name: Run modrelease
+      shell: bash
+      env:
+        ARGS: ${{ inputs.args }}  # through env, never pasted into the script: inputs may hold untrusted text
+      run: |
+        set -f
+        modrelease $ARGS
