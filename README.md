@@ -64,13 +64,13 @@ can use it. modrelease finds all of that before you upload, then packs the relea
 ## Quick start
 
 ```bash
-pipx install git+https://github.com/ayokiru/modrelease   # Python 3.11+
-
-modrelease check MyMod/                                   # what would leak
-modrelease pack MyMod/ -o MyMod-1.0.zip                   # check, then a clean zip and MyMod-1.0.zip.sha256
+pipx install git+https://github.com/ayokiru/modrelease
+modrelease check MyMod/
+modrelease pack MyMod/ -o MyMod-1.0.zip
 ```
 
-Videos need `ffmpeg` on PATH. Everything else is pure Python.
+`check` shows what would leak. `pack` runs the same check and writes the zip with its `.sha256`. Needs Python 3.11+;
+videos also need `ffmpeg` on PATH.
 
 <p align="center"><img src="docs/demo.gif" alt="modrelease pack stops on a log with the login in it and a screenshot with EXIF, clean strips the screenshot, then pack writes the zip and appeal writes the Nexus email" width="100%"></p>
 
