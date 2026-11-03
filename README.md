@@ -207,14 +207,17 @@ source = "build/MyMod"
 output = "dist/MyMod-{version}.zip"
 version = "1.1"
 prefix = "Game/Content/Paks/~mods"
-exclude = ["*.psd", "Saved/", "docs/*.md"]   # *.x: any file name, Dir/: a folder anywhere, a/b: from the root
-terms = ["My Real Name"]                     # more strings that must never ship
+exclude = ["*.psd", "Saved/", "docs/*.md"]
+terms = ["My Real Name"]
 
 [nexus]
 file_id = 12345
 mod_id = 678
-category = "main"                            # main, optional or miscellaneous
+category = "main"
 ```
+
+In `exclude`, `*.psd` matches a file name anywhere, `Saved/` a folder anywhere and `docs/*.md` a path from the root
+of the archive. `terms` are more strings that must never ship. `category` is `main`, `optional` or `miscellaneous`.
 
 ## GitHub Action
 
