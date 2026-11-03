@@ -51,6 +51,8 @@ def cmd_check(a) -> int:
 
 def cmd_pack(a) -> int:
     items = pack.collect([Path(s) for s in a.sources])
+    if not items:
+        raise ValueError("nothing to pack: no files in " + ", ".join(a.sources))
     problems, notes = pack.check(items, pack.personal_terms(a.term))
     _print_findings(problems, notes)
     if problems and not a.force:

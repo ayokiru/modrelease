@@ -65,10 +65,12 @@ def scan_bytes(name: str, data: bytes, terms: list[str]) -> list[Finding]:
     return found
 
 
-def user_folders(name: str, data: bytes) -> list[Finding]:
+def user_folders(name: str, data: bytes, known: list[str] = ()) -> list[Finding]:
     """Other people's user folders, e.g. the build machine path a library was compiled on. Usually harmless,
-    but a folder from your second PC or old login would show up here too."""
+    but a folder from your second PC or old login would show up here too. `known` (your own terms) are left out:
+    those are already reported as problems."""
     users = {m.group(1).lower() for m in USER_PATH.finditer(data)} - SHARED_USER_DIRS
+    users -= {t.lower().encode("utf-8") for t in known}
     if not users:
         return []
     shown = ", ".join(u.decode("utf-8", "replace") for u in sorted(users))
@@ -114,7 +116,7 @@ def check_file(name: str, data: bytes, terms: list[str]) -> tuple[list[Finding],
     """-> (problems that stop the release, notes about what Nexus will do with the file)."""
     ext = Path(name).suffix.lower()
     problems = scan_bytes(name, data, terms) + (image_metadata(name, data) if ext in IMAGES else [])
-    notes = user_folders(name, data)
+    notes = user_folders(name, data, terms)
     if ext in ARCHIVES:
         notes.append(Finding(name, "archive inside the archive: Nexus quarantines nested archives"))
     if ext in EXECUTABLES:

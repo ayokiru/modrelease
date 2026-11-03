@@ -10,6 +10,8 @@ pipx install git+https://github.com/ayokiru/modrelease
 
 Python 3.10+, works on Windows, Linux and macOS. Videos need `ffmpeg` on PATH.
 
+<p align="center"><img src="docs/demo.gif" alt="modrelease pack stops on a log with the login in it and a screenshot with EXIF, clean strips the screenshot, then pack writes the zip and appeal writes the Nexus email" width="100%"></p>
+
 ## Why
 
 Config files and logs in a mod archive keep `C:\Users\yourname\...` paths, compiled tools keep
