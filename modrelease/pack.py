@@ -282,3 +282,15 @@ def write_zip(items: list[tuple[Path, str]], out: Path, prefix: str = "") -> str
     digest = sha256(out)
     out.with_name(out.name + ".sha256").write_text(f"{digest}  {out.name}\n", encoding="utf-8")
     return digest
+
+
+def diff_zips(old: Path, new: Path) -> tuple[list[str], list[str], list[tuple[str, int, int]], int]:
+    """-> (added, removed, changed as (name, old size, new size), unchanged count), from the zip headers alone."""
+    def entries(p: Path) -> dict[str, tuple[int, int]]:
+        with zipfile.ZipFile(p) as z:
+            return {i.filename: (i.CRC, i.file_size) for i in z.infolist() if not i.is_dir()}
+    a, b = entries(old), entries(new)
+    added = sorted(b.keys() - a.keys())
+    removed = sorted(a.keys() - b.keys())
+    changed = sorted((n, a[n][1], b[n][1]) for n in a.keys() & b.keys() if a[n] != b[n])
+    return added, removed, changed, len(a.keys() & b.keys()) - len(changed)

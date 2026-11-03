@@ -119,6 +119,22 @@ class ConfigTests(Tmp):
         self.assertIn("sorce", err.getvalue())
 
 
+class DiffTests(Tmp):
+    def test_added_removed_changed(self):
+        def z(name, files):
+            p = self.d / name
+            with zipfile.ZipFile(p, "w") as f:
+                for n, data in files.items():
+                    f.writestr(n, data)
+            return p
+        old = z("1.0.zip", {"a.pak": b"same", "b.pak": b"old", "gone.txt": b"x"})
+        new = z("1.1.zip", {"a.pak": b"same", "b.pak": b"newer", "c.pak": b"y"})
+        self.assertEqual(pack.diff_zips(old, new), (["c.pak"], ["gone.txt"], [("b.pak", 3, 5)], 1))
+        with redirect_stdout(io.StringIO()) as out:
+            main(["diff", str(old), str(new)])
+        self.assertIn("  ~ b.pak (3 B -> 5 B)", out.getvalue())
+
+
 class NameTests(unittest.TestCase):
     def test_names_that_break_on_windows(self):
         problems, _ = pack.check_names(["Textures/Sword.dds", "textures/sword.dds", "aux.txt", "a/b:c.ini", "end."])

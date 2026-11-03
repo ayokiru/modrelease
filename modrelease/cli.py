@@ -2,6 +2,7 @@
 
   modrelease check  FILES...        look for your login, PC name, email and user paths, image metadata
   modrelease pack   SRC -o X.zip    the same check, then a reproducible zip and its .sha256
+  modrelease diff   OLD.zip NEW.zip   files added, removed and changed between two releases
   modrelease clean  MEDIA... -o DIR screenshots and videos without EXIF, GPS, tags or encoder strings
   modrelease vt     X.zip           VirusTotal result for the file (VT_API_KEY)
   modrelease appeal X.zip ...       the email that gets a quarantined Nexus file reviewed
@@ -109,6 +110,22 @@ def cmd_pack(a) -> int:
     return 0
 
 
+def _kb(n: int) -> str:
+    return f"{n / 1024:,.0f} KB" if n >= 1024 else f"{n} B"
+
+
+def cmd_diff(a) -> int:
+    added, removed, changed, same = pack.diff_zips(Path(a.old), Path(a.new))
+    for n in added:
+        print(f"  + {n}")
+    for n in removed:
+        print(f"  - {n}")
+    for n, old_size, new_size in changed:
+        print(f"  ~ {n} ({_kb(old_size)} -> {_kb(new_size)})")
+    print(f"{len(added)} added, {len(removed)} removed, {len(changed)} changed, {same} unchanged")
+    return 0
+
+
 def cmd_clean(a) -> int:
     done = clean.clean([Path(p) for p in a.paths], Path(a.output), keep_audio=not a.no_audio)
     for src, dst in done:
@@ -177,6 +194,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--force", action="store_true", help="write the zip even if the check finds problems")
     s.add_argument("--term", **term)
     s.set_defaults(fn=cmd_pack)
+
+    s = sub.add_parser("diff", help="what changed between two release zips")
+    s.add_argument("old")
+    s.add_argument("new")
+    s.set_defaults(fn=cmd_diff)
 
     s = sub.add_parser("clean", help="strip metadata from screenshots and videos")
     s.add_argument("paths", nargs="+")
