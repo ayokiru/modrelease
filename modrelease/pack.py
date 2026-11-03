@@ -1,6 +1,7 @@
 """Reproducible release archives and the checks that run before one is written."""
 from __future__ import annotations
 
+import fnmatch
 import getpass
 import hashlib
 import io
@@ -202,9 +203,22 @@ def check_names(names: list[str]) -> tuple[list[Finding], list[Finding]]:
     return problems, notes
 
 
-def collect(sources: list[Path], skip: list[Path] = ()) -> list[tuple[Path, str]]:
-    """(file, path inside the archive) for every file, sorted, junk and `skip` (the zip being written) left out.
-    A folder's contents go to the archive root."""
+def excluded(arc: str, patterns: list[str]) -> bool:
+    """`*.psd` matches a file name anywhere, `Saved/` a folder anywhere, `docs/*.md` a path from the archive root."""
+    arc = arc.lower()
+    parts = arc.split("/")
+    for pat in (p.lower().replace("\\", "/") for p in patterns):
+        if pat.endswith("/"):
+            if any(fnmatch.fnmatchcase(d, pat.rstrip("/")) for d in parts[:-1]):
+                return True
+        elif fnmatch.fnmatchcase(arc, pat) or ("/" not in pat and fnmatch.fnmatchcase(parts[-1], pat)):
+            return True
+    return False
+
+
+def collect(sources: list[Path], skip: list[Path] = (), exclude: list[str] = ()) -> list[tuple[Path, str]]:
+    """(file, path inside the archive) for every file, sorted; junk, `exclude` patterns and `skip` (the zip
+    being written) left out. A folder's contents go to the archive root."""
     skipped = {p.resolve() for p in skip}
     items = []
     for src in sources:
@@ -216,7 +230,7 @@ def collect(sources: list[Path], skip: list[Path] = ()) -> list[tuple[Path, str]
             items.append((src, src.name))
         else:
             raise FileNotFoundError(src)
-    items = [(p, a) for p, a in items if p.resolve() not in skipped]
+    items = [(p, a) for p, a in items if p.resolve() not in skipped and not excluded(a, exclude)]
     items.sort(key=lambda x: x[1])
     dupes = [a for a, n in Counter(a for _, a in items).items() if n > 1]
     if dupes:

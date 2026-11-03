@@ -11,10 +11,33 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tomllib
 import zipfile
 from pathlib import Path
 
 from . import __version__, appeal, clean, pack, virustotal
+
+
+CONFIG = "modrelease.toml"
+CONFIG_KEYS = {"source", "output", "version", "prefix", "exclude", "terms", "nexus"}
+
+
+def load_config(path: str | None) -> dict:
+    """modrelease.toml from the current folder (or --config); paths in it are relative to the file."""
+    p = Path(path or CONFIG)
+    if not p.is_file():
+        if path:
+            raise FileNotFoundError(f"config not found: {p}")
+        return {}
+    with open(p, "rb") as f:
+        cfg = tomllib.load(f)
+    unknown = set(cfg) - CONFIG_KEYS
+    if unknown:
+        raise ValueError(f"{p}: unknown setting(s) {', '.join(sorted(unknown))}")
+    for key in ("source", "output"):
+        if key in cfg:
+            cfg[key] = str(p.parent / cfg[key])
+    return cfg
 
 
 def _print_findings(problems, notes) -> None:
@@ -25,10 +48,14 @@ def _print_findings(problems, notes) -> None:
 
 
 def cmd_check(a) -> int:
-    terms = pack.personal_terms(a.term)
+    cfg = a.cfg
+    paths = a.paths or ([cfg["source"]] if "source" in cfg else [])
+    if not paths:
+        raise ValueError(f"nothing to check: pass files or a folder, or set `source` in {CONFIG}")
+    terms = pack.personal_terms(a.term + cfg.get("terms", []))
     needles = pack.term_needles(terms)
     problems, notes = [], []
-    for s in a.paths:
+    for s in paths:
         p = Path(s)
         if p.suffix.lower() == ".zip" and p.is_file():
             with zipfile.ZipFile(p) as z:
@@ -46,7 +73,7 @@ def cmd_check(a) -> int:
                 if len(dates) > 1:  # one fixed date for every file is what reproducible packers write
                     notes.append(pack.Finding(p.name, f"real file dates in the zip (newest {max(dates)[:3]}): repack with `modrelease pack`"))
         else:
-            pr, no = pack.check(pack.collect([p]), terms)
+            pr, no = pack.check(pack.collect([p], exclude=cfg.get("exclude", [])), terms)
             problems += pr
             notes += no
     _print_findings(problems, notes)
@@ -55,17 +82,29 @@ def cmd_check(a) -> int:
 
 
 def cmd_pack(a) -> int:
-    out = Path(a.output)
+    cfg = a.cfg
+    sources = a.sources or ([cfg["source"]] if "source" in cfg else [])
+    output = a.output or cfg.get("output")
+    if not sources or not output:
+        raise ValueError(f"pack needs a source and -o (or `source` and `output` in {CONFIG})")
+    version = a.mod_version or cfg.get("version")
+    if "{version}" in output:
+        if not version:
+            raise ValueError("the output name has {version}: pass --mod-version or set `version`")
+        output = output.replace("{version}", str(version))
+    prefix = a.prefix if a.prefix is not None else cfg.get("prefix", "")
+    out = Path(output)
     # a zip written into the mod folder must not end up inside the next one
-    items = pack.collect([Path(s) for s in a.sources], skip=[out, out.with_name(out.name + ".sha256")])
+    items = pack.collect([Path(s) for s in sources], skip=[out, out.with_name(out.name + ".sha256")],
+                         exclude=a.exclude + cfg.get("exclude", []))
     if not items:
-        raise ValueError("nothing to pack: no files in " + ", ".join(a.sources))
-    problems, notes = pack.check(items, pack.personal_terms(a.term), a.prefix)
+        raise ValueError("nothing to pack: no files in " + ", ".join(map(str, sources)))
+    problems, notes = pack.check(items, pack.personal_terms(a.term + cfg.get("terms", [])), prefix)
     _print_findings(problems, notes)
     if problems and not a.force:
         print(f"{len(problems)} problem(s), nothing written. Fix them or pass --force.")
         return 1
-    digest = pack.write_zip(items, out, a.prefix)
+    digest = pack.write_zip(items, out, prefix)
     print(f"{out} ({len(items)} files, {out.stat().st_size // 1024} KB)\nsha256 {digest}")
     return 0
 
@@ -119,18 +158,22 @@ def cmd_appeal(a) -> int:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="modrelease", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--version", action="version", version=f"modrelease {__version__}")
+    p.add_argument("--config", help=f"settings file (default: ./{CONFIG} if it exists)")
     sub = p.add_subparsers(dest="cmd", required=True)
     term = dict(action="append", default=[], metavar="TEXT", help="another string that must not ship (repeatable)")
 
     s = sub.add_parser("check", help="look for personal data in files, folders or a zip")
-    s.add_argument("paths", nargs="+")
+    s.add_argument("paths", nargs="*", help="default: `source` from the config")
     s.add_argument("--term", **term)
     s.set_defaults(fn=cmd_check)
 
     s = sub.add_parser("pack", help="check, then write a reproducible zip and its .sha256")
-    s.add_argument("sources", nargs="+", help="a folder (its contents go to the zip root) or files")
-    s.add_argument("-o", "--output", required=True, help="the zip to write")
-    s.add_argument("--prefix", default="", help="folder inside the zip, e.g. ProjectPBZ/Content/Paks/~mods")
+    s.add_argument("sources", nargs="*", help="a folder (its contents go to the zip root) or files")
+    s.add_argument("-o", "--output", help="the zip to write; {version} is replaced by the mod version")
+    s.add_argument("--mod-version", help="fills {version} in the output name")
+    s.add_argument("--prefix", help="folder inside the zip, e.g. ProjectPBZ/Content/Paks/~mods")
+    s.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
+                   help="leave files out: *.psd, Saved/, docs/*.md (repeatable)")
     s.add_argument("--force", action="store_true", help="write the zip even if the check finds problems")
     s.add_argument("--term", **term)
     s.set_defaults(fn=cmd_pack)
@@ -159,8 +202,9 @@ def main(argv: list[str] | None = None) -> int:
 
     a = p.parse_args(argv)
     try:
+        a.cfg = load_config(a.config)
         return a.fn(a)
-    except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as e:  # OSError covers locked files and no network
+    except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, tomllib.TOMLDecodeError) as e:  # OSError covers locked files and no network
         print(f"error: {e}", file=sys.stderr)
         return 2
 

@@ -89,6 +89,36 @@ class SecretAndDevFileTests(unittest.TestCase):
         self.assertEqual([n.file for n in notes], ["Saved/"])  # one note per folder, not per file
 
 
+class ConfigTests(Tmp):
+    def test_pack_from_config(self):
+        m = self.mod()
+        (m / "Saved").mkdir()
+        (m / "Saved" / "log.txt").write_text("x")
+        (m / "art.psd").write_bytes(b"8BPS")
+        cfg = self.d / "modrelease.toml"
+        cfg.write_text('source = "mod"\noutput = "dist/Mod-{version}.zip"\nversion = "1.2"\n'
+                       'prefix = "Game/Paks"\nexclude = ["*.psd", "Saved/"]\n')
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["--config", str(cfg), "pack"]), 0)
+        z = zipfile.ZipFile(self.d / "dist" / "Mod-1.2.zip")
+        self.assertEqual(z.namelist(), ["Game/Paks/b.txt", "Game/Paks/sub/a.pak"])
+
+    def test_cli_overrides_config_version(self):
+        self.mod()
+        cfg = self.d / "modrelease.toml"
+        cfg.write_text('source = "mod"\noutput = "Mod-{version}.zip"\nversion = "1.0"\n')
+        with redirect_stdout(io.StringIO()):
+            main(["--config", str(cfg), "pack", "--mod-version", "2.0"])
+        self.assertTrue((self.d / "Mod-2.0.zip").exists())
+
+    def test_typo_in_config_is_an_error(self):
+        cfg = self.d / "modrelease.toml"
+        cfg.write_text('sorce = "mod"\n')
+        with mock.patch("sys.stderr", io.StringIO()) as err:
+            self.assertEqual(main(["--config", str(cfg), "pack"]), 2)
+        self.assertIn("sorce", err.getvalue())
+
+
 class NameTests(unittest.TestCase):
     def test_names_that_break_on_windows(self):
         problems, _ = pack.check_names(["Textures/Sword.dds", "textures/sword.dds", "aux.txt", "a/b:c.ini", "end."])

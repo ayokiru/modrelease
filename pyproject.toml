@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Get a game mod ready for release: no personal data in the files, reproducible zip, VirusTotal check, Nexus Mods quarantine email"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["pillow>=10"]
 keywords = ["modding", "nexus mods", "release", "metadata", "virustotal", "reproducible"]
 classifiers = ["Programming Language :: Python :: 3", "Environment :: Console", "Topic :: Games/Entertainment"]
