@@ -89,6 +89,23 @@ class SecretAndDevFileTests(unittest.TestCase):
         self.assertEqual([n.file for n in notes], ["Saved/"])  # one note per folder, not per file
 
 
+class NameTests(unittest.TestCase):
+    def test_names_that_break_on_windows(self):
+        problems, _ = pack.check_names(["Textures/Sword.dds", "textures/sword.dds", "aux.txt", "a/b:c.ini", "end."])
+        self.assertEqual(sorted(p.file for p in problems), ["Textures/Sword.dds", "a/b:c.ini", "aux.txt", "end."])
+        self.assertIn("only in case", problems[0].what)
+
+    def test_long_and_non_latin_names_are_notes(self):
+        problems, notes = pack.check_names(["Paks/" + "x" * 200 + ".pak", "Моды/меч.pak"])
+        self.assertEqual(problems, [])
+        self.assertEqual([n.what.split(" ")[0] for n in notes], ["209", "non-Latin"])
+
+    def test_prefix_counts_toward_the_length(self):
+        items = [(Path(__file__), "f" * 150)]
+        _, notes = pack.check(items, [], prefix="Game/Content/Paks/~mods")
+        self.assertTrue(any("characters" in n.what for n in notes))
+
+
 class PackTests(Tmp):
     def test_same_input_same_bytes(self):
         m = self.mod()

@@ -44,6 +44,9 @@ DEBUG_EXT = {".pdb"}
 SOURCE_EXT = {".psd", ".blend", ".blend1", ".max", ".ma", ".mb", ".spp", ".kra", ".xcf",
               ".uproject", ".sln", ".csproj", ".vcxproj"}
 DEV_DIRS = {"saved", "intermediate", "deriveddatacache", ".vs", ".idea"}  # engine and IDE work folders
+WIN_BAD = re.compile(r'[<>:"|?*\x00-\x1f]|[. ]$')
+WIN_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+LONG_PATH = 160  # plus a deep game folder like C:\Program Files (x86)\Steam\steamapps\common\... nears Windows' 260
 
 
 @dataclass
@@ -177,8 +180,22 @@ def check_file(name: str, f: BinaryIO, needles: list[tuple[str, list[bytes], re.
 
 
 def check_names(names: list[str]) -> tuple[list[Finding], list[Finding]]:
-    """Checks on the list of paths inside the archive (as opposed to the file contents)."""
+    """Checks on the paths inside the archive, as opposed to the file contents: things that break on players' PCs."""
     problems, notes = [], []
+    by_case = {}
+    for n in names:
+        by_case.setdefault(n.lower(), []).append(n)
+    for same in by_case.values():
+        if len(same) > 1:
+            problems.append(Finding(same[0], f"differs only in case from {', '.join(same[1:])}: Windows keeps one of them"))
+    for n in names:
+        parts = n.split("/")
+        if any(WIN_BAD.search(p) or p.split(".")[0].lower() in WIN_RESERVED for p in parts):
+            problems.append(Finding(n, "a name Windows can't create (reserved word, <>:\"|?*, or a trailing dot or space)"))
+        if len(n) > LONG_PATH:
+            notes.append(Finding(n, f"{len(n)} characters: inside a deep game folder it can pass Windows' 260 limit"))
+        if not n.isascii():
+            notes.append(Finding(n, "non-Latin characters in the name: some mod managers and old unzip tools mangle them"))
     dev = sorted({p for n in names for p in n.split("/")[:-1] if p.lower() in DEV_DIRS})
     for d in dev:
         notes.append(Finding(d + "/", "an engine or IDE work folder: players don't need it"))
@@ -207,7 +224,7 @@ def collect(sources: list[Path], skip: list[Path] = ()) -> list[tuple[Path, str]
     return items
 
 
-def check(items: list[tuple[Path, str]], terms: list[str]) -> tuple[list[Finding], list[Finding]]:
+def check(items: list[tuple[Path, str]], terms: list[str], prefix: str = "") -> tuple[list[Finding], list[Finding]]:
     needles = term_needles(terms)
     problems, notes = [], []
     for path, arc in items:
@@ -215,7 +232,8 @@ def check(items: list[tuple[Path, str]], terms: list[str]) -> tuple[list[Finding
             pr, no = check_file(arc, f, needles)
         problems += pr
         notes += no
-    pr, no = check_names([arc for _, arc in items])
+    prefix = prefix.strip("/\\").replace("\\", "/")
+    pr, no = check_names([f"{prefix}/{arc}" if prefix else arc for _, arc in items])
     return problems + pr, notes + no
 
 

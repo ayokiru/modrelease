@@ -60,7 +60,7 @@ def cmd_pack(a) -> int:
     items = pack.collect([Path(s) for s in a.sources], skip=[out, out.with_name(out.name + ".sha256")])
     if not items:
         raise ValueError("nothing to pack: no files in " + ", ".join(a.sources))
-    problems, notes = pack.check(items, pack.personal_terms(a.term))
+    problems, notes = pack.check(items, pack.personal_terms(a.term), a.prefix)
     _print_findings(problems, notes)
     if problems and not a.force:
         print(f"{len(problems)} problem(s), nothing written. Fix them or pass --force.")
