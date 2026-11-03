@@ -6,7 +6,7 @@ time you touched every file. A Discord webhook or a GitHub token in a config is 
 can use it. modrelease finds all of that before you upload, then packs the release.
 
 ```
-pipx install modrelease
+pipx install modrelease        # or: pip install modrelease
 modrelease check MyMod/
 modrelease pack MyMod/ -o MyMod-1.0.zip
 ```

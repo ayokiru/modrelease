@@ -65,7 +65,7 @@ can use it. modrelease finds all of that before you upload, then packs the relea
 ## Quick start
 
 ```bash
-pipx install modrelease
+pipx install modrelease        # or: pip install modrelease
 modrelease check MyMod/
 modrelease pack MyMod/ -o MyMod-1.0.zip
 ```
