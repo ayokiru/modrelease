@@ -5,6 +5,7 @@
 
 <p align="center">
   <a href="https://github.com/ayokiru/modrelease/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/ayokiru/modrelease/test.yml?branch=main&style=flat-square&label=tests" alt="Tests"></a>
+  <a href="https://pypi.org/project/modrelease/"><img src="https://img.shields.io/pypi/v/modrelease?style=flat-square&color=16A34A" alt="PyPI version"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-1E293B?style=flat-square" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/Windows%20%C2%B7%20Linux-1E293B?style=flat-square" alt="Windows and Linux">
   <a href="#github-action"><img src="https://img.shields.io/badge/GitHub%20Action-ready-16A34A?style=flat-square" alt="GitHub Action"></a>
@@ -64,7 +65,7 @@ can use it. modrelease finds all of that before you upload, then packs the relea
 ## Quick start
 
 ```bash
-pipx install git+https://github.com/ayokiru/modrelease
+pipx install modrelease
 modrelease check MyMod/
 modrelease pack MyMod/ -o MyMod-1.0.zip
 ```
