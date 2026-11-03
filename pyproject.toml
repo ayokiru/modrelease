@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modrelease"
-version = "0.1.0"
-description = "Get a game mod ready for release: no personal data in the files, reproducible zip, VirusTotal check, Nexus Mods quarantine email"
+version = "0.2.0"
+description = "Get a game mod ready for release: no personal data or secrets in the files, reproducible zip, VirusTotal check, Nexus Mods upload and quarantine email"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
