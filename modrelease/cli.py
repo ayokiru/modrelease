@@ -5,6 +5,7 @@
   modrelease diff   OLD.zip NEW.zip   files added, removed and changed between two releases
   modrelease clean  MEDIA... -o DIR screenshots and videos without EXIF, GPS, tags or encoder strings
   modrelease vt     X.zip           VirusTotal result for the file (VT_API_KEY)
+  modrelease nexus  X.zip ...       upload it as a new version of a file on Nexus Mods (NEXUS_API_KEY)
   modrelease appeal X.zip ...       the email that gets a quarantined Nexus file reviewed
 """
 from __future__ import annotations
@@ -16,11 +17,12 @@ import tomllib
 import zipfile
 from pathlib import Path
 
-from . import __version__, appeal, clean, pack, virustotal
+from . import __version__, appeal, clean, nexus, pack, virustotal
 
 
 CONFIG = "modrelease.toml"
 CONFIG_KEYS = {"source", "output", "version", "prefix", "exclude", "terms", "nexus"}
+NEXUS_KEYS = {"file_id", "mod_id", "category", "name"}
 
 
 def load_config(path: str | None) -> dict:
@@ -32,13 +34,23 @@ def load_config(path: str | None) -> dict:
         return {}
     with open(p, "rb") as f:
         cfg = tomllib.load(f)
-    unknown = set(cfg) - CONFIG_KEYS
+    unknown = (set(cfg) - CONFIG_KEYS) | {f"nexus.{k}" for k in set(cfg.get("nexus", {})) - NEXUS_KEYS}
     if unknown:
         raise ValueError(f"{p}: unknown setting(s) {', '.join(sorted(unknown))}")
     for key in ("source", "output"):
         if key in cfg:
             cfg[key] = str(p.parent / cfg[key])
     return cfg
+
+
+def _output(given: str | None, cfg: dict, version: str | None) -> str | None:
+    """The zip name from -o or the config, with {version} filled in."""
+    output = given or cfg.get("output")
+    if output and "{version}" in output:
+        if not version:
+            raise ValueError("the output name has {version}: pass --mod-version or set `version`")
+        output = output.replace("{version}", str(version))
+    return output
 
 
 def _print_findings(problems, notes) -> None:
@@ -85,14 +97,9 @@ def cmd_check(a) -> int:
 def cmd_pack(a) -> int:
     cfg = a.cfg
     sources = a.sources or ([cfg["source"]] if "source" in cfg else [])
-    output = a.output or cfg.get("output")
+    output = _output(a.output, cfg, a.mod_version or cfg.get("version"))
     if not sources or not output:
         raise ValueError(f"pack needs a source and -o (or `source` and `output` in {CONFIG})")
-    version = a.mod_version or cfg.get("version")
-    if "{version}" in output:
-        if not version:
-            raise ValueError("the output name has {version}: pass --mod-version or set `version`")
-        output = output.replace("{version}", str(version))
     prefix = a.prefix if a.prefix is not None else cfg.get("prefix", "")
     out = Path(output)
     # a zip written into the mod folder must not end up inside the next one
@@ -156,6 +163,27 @@ def cmd_vt(a) -> int:
     return 1 if r["flagged"] else 0
 
 
+def cmd_nexus(a) -> int:
+    cfg, nx = a.cfg, a.cfg.get("nexus", {})
+    version = a.mod_version or cfg.get("version")
+    file = a.file or _output(None, cfg, version)
+    file_id = a.file_id or nx.get("file_id")
+    key = a.key or os.environ.get("NEXUS_API_KEY")
+    missing = [what for what, v in (("the zip", file), ("--file-id", file_id), ("--mod-version", version),
+                                    ("an API key (NEXUS_API_KEY or --key)", key)) if not v]
+    if missing:
+        raise ValueError("nexus needs " + ", ".join(missing))
+    mod_id = a.mod_id or nx.get("mod_id")
+    path = Path(file)
+    print(f"Uploading {path.name} ({path.stat().st_size // 1024} KB) as version {version} of file {file_id}")
+    vid = nexus.upload(path, key, str(file_id), str(version), name=a.name or nx.get("name"), description=a.description,
+                       category=a.category or nx.get("category", "main"), archive_old=a.archive_old,
+                       update_mod_version=a.update_mod_version, mod_id=str(mod_id) if mod_id else None,
+                       changelog=a.changelog)
+    print(f"Done: new version {vid} on Nexus")
+    return 0
+
+
 def cmd_appeal(a) -> int:
     path = Path(a.file)
     summary = ""
@@ -211,6 +239,20 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--upload", action="store_true", help="upload the file if VirusTotal has not seen it")
     s.add_argument("--key", help="VirusTotal API key (default: VT_API_KEY)")
     s.set_defaults(fn=cmd_vt)
+
+    s = sub.add_parser("nexus", help="upload a new version of a file to Nexus Mods (NEXUS_API_KEY)")
+    s.add_argument("file", nargs="?", help="the zip (default: `output` from the config)")
+    s.add_argument("--file-id", help="the file on the mod page that gets the new version (nexus.file_id)")
+    s.add_argument("--mod-version", help="version of the upload (default: `version` from the config)")
+    s.add_argument("--name", help="display name (default: the zip name)")
+    s.add_argument("--description", help="file description")
+    s.add_argument("--category", choices=nexus.CATEGORIES, help="default: main")
+    s.add_argument("--archive-old", action="store_true", help="move the previous version to Old files")
+    s.add_argument("--update-mod-version", action="store_true", help="set the mod's version to this one")
+    s.add_argument("--mod-id", help="needed for --changelog (nexus.mod_id)")
+    s.add_argument("--changelog", help="changelog text for this version")
+    s.add_argument("--key", help="Nexus API key (default: NEXUS_API_KEY)")
+    s.set_defaults(fn=cmd_nexus)
 
     s = sub.add_parser("appeal", help="write the email for a quarantined Nexus Mods file")
     s.add_argument("file", help="the zip you uploaded")

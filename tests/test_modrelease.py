@@ -1,5 +1,6 @@
 """python -m unittest  (no network; video tests need ffmpeg)"""
 import io
+import json
 import shutil
 import subprocess
 import tempfile
@@ -311,6 +312,45 @@ class VirusTotalTests(Tmp):
             r = virustotal.report(self.f, "key", upload=True, wait=0)
         self.assertTrue(r["pending"])
         self.assertFalse(r["known"])
+
+
+class NexusTests(Tmp):
+    def test_upload_flow(self):
+        from modrelease import nexus
+        f = self.d / "Mod-1.1.zip"
+        f.write_bytes(b"a" * 10 + b"b" * 5)
+        sent = []
+        states = iter(["processing", "available"])
+
+        def fake_send(method, url, body=None, headers=None):
+            sent.append((method, url.replace(nexus.API, ""), body))
+            reply = {}
+            if url.endswith("/uploads/multipart"):
+                reply = {"data": {"id": "up1", "part_size_bytes": 10, "complete_presigned_url": "https://s3/done",
+                                  "part_presigned_urls": ["https://s3/p1", "https://s3/p2"]}}
+            elif url.endswith("/uploads/up1"):
+                reply = {"data": {"state": next(states)}}
+            elif url.endswith("/versions"):
+                reply = {"data": {"version": {"id": 777}}}
+            return {"ETag": f'"etag-{len(sent)}"'}, json.dumps(reply).encode()
+
+        with mock.patch.object(nexus, "_send", side_effect=fake_send), mock.patch.object(nexus.time, "sleep"):
+            vid = nexus.upload(f, "key", "55", "1.1", mod_id="9", changelog="Fixed a crash", log=lambda *_: None)
+        self.assertEqual(vid, "777")
+        self.assertEqual([b for m, u, b in sent if u.startswith("https://s3/p")], [b"a" * 10, b"b" * 5])
+        done = next(b for m, u, b in sent if u == "https://s3/done").decode()
+        self.assertIn("<PartNumber>2</PartNumber>", done)
+        self.assertIn("<ETag>etag-3</ETag>", done)  # quotes stripped
+        version = json.loads(next(b for m, u, b in sent if u == "/mod-files/55/versions"))
+        self.assertEqual((version["upload_id"], version["version"], version["file_category"]), ("up1", "1.1", "main"))
+        self.assertEqual(json.loads(sent[-1][2]), {"version": "1.1", "changelog": "Fixed a crash"})
+
+    def test_missing_settings_are_listed(self):
+        f = self.d / "m.zip"
+        f.write_bytes(b"x")
+        with mock.patch("sys.stderr", io.StringIO()) as err, mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(main(["nexus", str(f)]), 2)
+        self.assertIn("--file-id, --mod-version, an API key", err.getvalue())
 
 
 class AppealTests(Tmp):
