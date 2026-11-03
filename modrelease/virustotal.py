@@ -1,7 +1,6 @@
 """VirusTotal check of a release file (free API key: https://www.virustotal.com/gui/my-apikey)."""
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 import urllib.error
@@ -9,17 +8,11 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from .pack import sha256
+
 API = "https://www.virustotal.com/api/v3"
 GUI = "https://www.virustotal.com/gui/file/{}"
 DIRECT_LIMIT = 32 * 1024 * 1024  # bigger files go through a one-time upload URL
-
-
-def sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    return h.hexdigest()
 
 
 def _call(url: str, key: str, data: bytes | None = None, headers: dict | None = None) -> dict | None:
@@ -45,17 +38,19 @@ def _upload(path: Path, key: str) -> str:
 
 
 def report(path: Path, key: str, upload: bool = False, wait: int = 600) -> dict:
-    """-> {"sha256", "link", "known", "stats", "flagged": [(engine, verdict)]}. Uploads unknown files when asked."""
+    """-> {"sha256", "link", "known", "pending", "stats", "flagged": [(engine, verdict)]}. Uploads unknown files when asked."""
     digest = sha256(path)
-    out = {"sha256": digest, "link": GUI.format(digest), "known": False, "stats": {}, "flagged": []}
+    out = {"sha256": digest, "link": GUI.format(digest), "known": False, "pending": False, "stats": {}, "flagged": []}
     data = _call(f"{API}/files/{digest}", key)
     if data is None and upload:
         analysis = _upload(path, key)
         deadline = time.time() + wait
-        while time.time() < deadline:
-            a = _call(f"{API}/analyses/{analysis}", key)
-            if a["data"]["attributes"]["status"] == "completed":
+        while True:
+            if _call(f"{API}/analyses/{analysis}", key)["data"]["attributes"]["status"] == "completed":
                 break
+            if time.time() >= deadline:
+                out["pending"] = True  # uploaded; uploading again would only use up the quota
+                return out
             time.sleep(15)  # the free API allows 4 requests a minute
         data = _call(f"{API}/files/{digest}", key)
     if data is None:

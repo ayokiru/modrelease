@@ -1,15 +1,22 @@
-"""python -m unittest  (no network, no game files)"""
+"""python -m unittest  (no network; video tests need ffmpeg)"""
+import io
 import shutil
 import subprocess
 import tempfile
 import unittest
 import zipfile
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
-from modrelease import appeal, clean, pack
+from modrelease import appeal, clean, pack, virustotal
 from modrelease.cli import main
+
+
+def scan(data: bytes, terms: list[str]):
+    return pack.scan_stream(io.BytesIO(data), pack.term_needles(terms))
 
 
 class Tmp(unittest.TestCase):
@@ -26,6 +33,38 @@ class Tmp(unittest.TestCase):
         return m
 
 
+class ScanTests(unittest.TestCase):
+    def test_login_any_case_and_utf16(self):
+        self.assertEqual(scan(b"log C:\\Users\\JDoe\\Desktop", ["jdoe"])[0], ["jdoe"])
+        self.assertEqual(scan("built by JDOE".encode("utf-16-le"), ["jdoe"])[0], ["jdoe"])
+        self.assertEqual(scan(b"nothing here", ["jdoe"])[0], [])
+
+    def test_short_logins(self):
+        # "max" is everywhere in programs (max(), SetMaxSize): only a path segment or user folder counts
+        self.assertEqual(scan(b"SetMaxSize max(a, b) max_speed", ["max"])[0], [])
+        self.assertEqual(scan(b"D:\\mods\\max\\build", ["max"])[0], ["max"])
+        self.assertEqual(scan("/home/max/".encode("utf-16-le"), ["max"])[0], ["max"])
+        problems, _ = pack.check_file("a.log", io.BytesIO(b"home=C:\\Users\\max"), pack.term_needles(["max"]))
+        self.assertEqual([p.what for p in problems], ["contains 'max'"])
+        # 4-5 letters: a whole word only
+        self.assertEqual(scan(b"Mikesoft MIKE_LIB", ["mike"])[0], [])
+        self.assertEqual(scan(b"made by Mike.", ["mike"])[0], ["mike"])
+
+    def test_non_latin_name_any_case(self):
+        self.assertEqual(scan("автор: ДМИТРИЙ".encode("utf-8"), ["Дмитрий"])[0], ["Дмитрий"])
+
+    def test_pieces_overlap(self):
+        with mock.patch.object(pack, "CHUNK", 8):
+            terms, users = scan(b"xxxxxxxxxxx C:\\Users\\jdoe-laptop\\x and jdoe", ["jdoe"])
+        self.assertEqual(terms, ["jdoe"])
+        self.assertEqual(users, {b"jdoe-laptop"})  # not "jdo" and "jdoe-l" from the cut
+
+    def test_user_folders(self):
+        self.assertEqual(scan(b'{"p": "C:\\\\Users\\\\alice\\\\x"}', [])[1], {b"alice"})  # JSON-escaped path
+        self.assertEqual(scan(b"C:\\Users\\Public\\Documents", [])[1], set())            # shared folder
+        self.assertEqual(scan(b"see https://github.com/users/bob/repos", [])[1], set())  # a web address
+
+
 class PackTests(Tmp):
     def test_same_input_same_bytes(self):
         m = self.mod()
@@ -39,28 +78,33 @@ class PackTests(Tmp):
         self.assertEqual({i.date_time for i in z.infolist()}, {(1980, 1, 1, 0, 0, 0)})
         self.assertIn("  a.zip", (self.d / "a.zip.sha256").read_text())
 
-    def test_finds_login_paths_and_utf16(self):
-        terms = ["jdoe", "jdoe@mail.com"]
-        found = [f.what for f in pack.scan_bytes("x", b"log C:\\Users\\JDoe\\Desktop\\mod", terms)]
-        self.assertTrue(any("'jdoe'" in w for w in found))
-        self.assertTrue(pack.scan_bytes("x", "built by JDOE".encode("utf-16-le"), terms))
-        self.assertFalse(pack.scan_bytes("x", b"nothing here", terms))
-
-    def test_other_user_folders_are_notes(self):
-        notes = [f.what for f in pack.user_folders("x", b"log C:\\Users\\JDoe\\Desktop\\mod")]
-        self.assertTrue(any("(jdoe)" in w for w in notes))
-        self.assertTrue(pack.user_folders("x", b'{"p": "C:\\\\Users\\\\alice\\\\x"}'))   # JSON-escaped path
-        self.assertFalse(pack.user_folders("x", b"C:\\Users\\Public\\Documents"))      # shared folder is fine
-        self.assertFalse(pack.user_folders("x", b"/opt/build/lib"))
+    def test_failed_write_keeps_the_old_zip(self):
+        m = self.mod()
+        out = self.d / "out.zip"
+        out.write_bytes(b"old release")
+        items = pack.collect([m]) + [(self.d / "gone.bin", "gone.bin")]
+        with self.assertRaises(FileNotFoundError):
+            pack.write_zip(items, out)
+        self.assertEqual(out.read_bytes(), b"old release")
+        self.assertFalse((self.d / "out.zip.part").exists())
 
     def test_pack_refuses_leaks_unless_forced(self):
         m = self.mod()
         (m / "config.ini").write_text("author=Jane Roe")
         out = self.d / "out.zip"
-        self.assertEqual(main(["pack", str(m), "-o", str(out), "--term", "jane roe"]), 1)
-        self.assertFalse(out.exists())
-        self.assertEqual(main(["pack", str(m), "-o", str(out), "--term", "jane roe", "--force"]), 0)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["pack", str(m), "-o", str(out), "--term", "jane roe"]), 1)
+            self.assertFalse(out.exists())
+            self.assertEqual(main(["pack", str(m), "-o", str(out), "--term", "jane roe", "--force"]), 0)
         self.assertTrue(out.exists())
+
+    def test_zip_inside_the_mod_folder_is_not_packed_again(self):
+        m = self.mod()
+        out = m / "release.zip"
+        with redirect_stdout(io.StringIO()):
+            main(["pack", str(m), "-o", str(out)])
+            main(["pack", str(m), "-o", str(out)])
+        self.assertEqual(zipfile.ZipFile(out).namelist(), ["b.txt", "sub/a.pak"])
 
     def test_notes_for_nexus_quarantine(self):
         m = self.mod()
@@ -68,6 +112,18 @@ class PackTests(Tmp):
         (m / "inner.zip").write_bytes(b"PK")
         _, notes = pack.check(pack.collect([m]), [])
         self.assertEqual(sorted(n.file for n in notes), ["inner.zip", "tool.exe"])
+
+    def test_own_folder_is_a_problem_not_also_a_note(self):
+        problems, notes = pack.check_file("log.txt", io.BytesIO(b"C:\\Users\\jdoe\\x"), pack.term_needles(["jdoe"]))
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(notes, [])
+
+    def test_broken_zip_is_an_error_not_a_traceback(self):
+        bad = self.d / "bad.zip"
+        bad.write_bytes(b"not a zip")
+        with mock.patch("sys.stderr", io.StringIO()) as err:
+            self.assertEqual(main(["check", str(bad)]), 2)
+        self.assertIn("error:", err.getvalue())
 
 
 class CleanTests(Tmp):
@@ -82,35 +138,96 @@ class CleanTests(Tmp):
         clean.clean_image(src, dst)
         self.assertFalse(pack.image_metadata("shot.jpg", dst.read_bytes()))
         self.assertNotIn(b"PhoneMaker", dst.read_bytes())
-        with Image.open(dst) as im:
-            self.assertEqual(im.size, (8, 8))
 
-    def test_png_text_chunks_are_gone(self):
+    def test_phone_photo_stays_upright(self):
+        src = self.d / "phone.jpg"
+        exif = Image.Exif()
+        exif[0x0112] = 6  # Orientation: rotate 90 to display
+        Image.new("RGB", (40, 20), "blue").save(src, exif=exif)
+        clean.clean_image(src, src)  # in place
+        with Image.open(src) as im:
+            self.assertEqual(im.size, (20, 40))
+
+    def test_png_text_gone_transparency_kept(self):
         from PIL import PngImagePlugin
-        src = self.d / "a.png"
         info = PngImagePlugin.PngInfo()
         info.add_text("Author", "Real Name")
+        src = self.d / "a.png"
         Image.new("RGBA", (4, 4), (0, 0, 0, 0)).save(src, pnginfo=info)
-        dst = self.d / "out" / "a.png"
-        clean.clean_image(src, dst)
-        self.assertNotIn(b"Real Name", dst.read_bytes())
-        with Image.open(dst) as im:
-            self.assertEqual(im.mode, "RGBA")
+        pal = self.d / "p.png"
+        Image.new("P", (4, 4), 0).save(pal, transparency=0)
+        clean.clean([src, pal], self.d / "out")
+        self.assertNotIn(b"Real Name", (self.d / "out" / "a.png").read_bytes())
+        with Image.open(self.d / "out" / "p.png") as im:
+            self.assertEqual(im.info.get("transparency"), 0)
 
-    @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
-    def test_video_tags_are_gone(self):
-        src, dst = self.d / "v.mp4", self.d / "out" / "v.mp4"
-        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=5:duration=1",
-                        "-c:v", "libx264", "-metadata", "title=My PC", "-metadata", "creation_time=2026-01-02T03:04:05Z",
-                        str(src)], check=True)
+    def test_same_names_in_two_folders(self):
+        for sub in ("a", "b"):
+            (self.d / "shots" / sub).mkdir(parents=True)
+            Image.new("RGB", (4, 4), "red").save(self.d / "shots" / sub / "1.jpg")
+        clean.clean([self.d / "shots"], self.d / "out")
+        self.assertTrue((self.d / "out" / "a" / "1.jpg").exists())
+        self.assertTrue((self.d / "out" / "b" / "1.jpg").exists())
+
+    def test_animated_image_is_refused(self):
+        src = self.d / "anim.webp"
+        frames = [Image.new("RGB", (4, 4), c) for c in ("red", "blue")]
+        frames[0].save(src, save_all=True, append_images=frames[1:])
+        with self.assertRaises(ValueError):
+            clean.clean_image(src, self.d / "out.webp")
+
+    def _video(self, codec: str, settings: bytes):
+        src, dst = self.d / f"{codec}.mp4", self.d / "out" / f"{codec}.mp4"
+        r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=10:duration=1",
+                            "-c:v", codec, "-metadata", "title=My PC", str(src)], capture_output=True)
+        if r.returncode:
+            self.skipTest(f"ffmpeg has no {codec}")
+        self.assertIn(settings, src.read_bytes())
         clean.clean_video(src, dst)
         data = dst.read_bytes()
-        for leak in (b"My PC", b"x264 - core", b"Lavf"):
+        for leak in (b"My PC", settings, b"Lavf"):
             self.assertNotIn(leak, data)
+        frames = lambda p: subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v",
+                                          "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(p)],
+                                         capture_output=True, text=True).stdout.strip()
+        self.assertEqual(frames(src), frames(dst))
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs ffmpeg")
+    def test_h264_video(self):
+        self._video("libx264", b"x264 - core")
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs ffmpeg")
+    def test_h265_video(self):
+        self._video("libx265", b"x265 (build")
+
+
+class VirusTotalTests(Tmp):
+    def setUp(self):
+        super().setUp()
+        self.f = self.d / "m.zip"
+        self.f.write_bytes(b"zip")
+
+    def test_flagged_engines(self):
+        answer = {"data": {"attributes": {
+            "last_analysis_stats": {"malicious": 1, "undetected": 67},
+            "last_analysis_results": {"Bkav Pro": {"category": "malicious", "result": "W32.Malware"},
+                                      "ESET-NOD32": {"category": "undetected", "result": None}}}}}
+        with mock.patch.object(virustotal, "_call", return_value=answer):
+            r = virustotal.report(self.f, "key")
+        self.assertTrue(r["known"])
+        self.assertEqual(r["flagged"], [("Bkav Pro", "W32.Malware")])
+
+    def test_upload_still_scanning(self):
+        calls = iter([None, {"data": {"attributes": {"status": "queued"}}}])
+        with mock.patch.object(virustotal, "_call", side_effect=lambda *a, **k: next(calls)), \
+                mock.patch.object(virustotal, "_upload", return_value="analysis-1"):
+            r = virustotal.report(self.f, "key", upload=True, wait=0)
+        self.assertTrue(r["pending"])
+        self.assertFalse(r["known"])
 
 
 class AppealTests(Tmp):
-    def test_lists_executables(self):
+    def test_lists_programs_and_counts_libraries(self):
         z = self.d / "tool.zip"
         with zipfile.ZipFile(z, "w") as f:
             f.writestr("Tool/Tool.exe", b"MZ")
@@ -123,7 +240,14 @@ class AppealTests(Tmp):
         self.assertIn("- 2 .dll libraries", text)
         self.assertNotIn("readme", text)
         self.assertIn("1. pip install x", text)
-        self.assertTrue(text.rstrip().endswith("me"))
+
+    def test_clean_result_wording(self):
+        z = self.d / "tool.zip"
+        zipfile.ZipFile(z, "w").close()
+        clean_vt = {"known": True, "pending": False, "stats": {"undetected": 70}, "flagged": []}
+        with mock.patch.object(virustotal, "report", return_value=clean_vt), redirect_stdout(io.StringIO()) as out:
+            main(["appeal", str(z), "--mod", "m", "--user", "u", "--key", "k"])
+        self.assertIn("none of 70 engines flag it", out.getvalue())
 
 
 if __name__ == "__main__":

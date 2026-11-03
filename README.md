@@ -88,6 +88,10 @@ Nexus account.
 
 - Text hidden in compressed data (game paks, nested archives) is not unpacked, so the check cannot see it.
 - The check knows your login and git identity on this PC. Names from another PC or an old account need `--term`.
+- Short logins are common words inside programs, so a login of up to 3 letters counts only inside a path, and one
+  of 4 or 5 letters only as a whole word. A login like `mike` can still turn up in a third-party DLL's credits;
+  check those findings and pack with `--force`.
+- H.265 videos lose their HDR metadata in `clean`, since it sits in the same kind of block as the encoder settings.
 
 ## License
 

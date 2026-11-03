@@ -26,6 +26,7 @@ def _print_findings(problems, notes) -> None:
 
 def cmd_check(a) -> int:
     terms = pack.personal_terms(a.term)
+    needles = pack.term_needles(terms)
     problems, notes = [], []
     for s in a.paths:
         p = Path(s)
@@ -34,7 +35,8 @@ def cmd_check(a) -> int:
                 for info in z.infolist():
                     if info.is_dir():
                         continue
-                    pr, no = pack.check_file(info.filename, z.read(info), terms)
+                    with z.open(info) as f:
+                        pr, no = pack.check_file(info.filename, f, needles)
                     problems += pr
                     notes += no
                 dates = {i.date_time for i in z.infolist()}
@@ -50,7 +52,9 @@ def cmd_check(a) -> int:
 
 
 def cmd_pack(a) -> int:
-    items = pack.collect([Path(s) for s in a.sources])
+    out = Path(a.output)
+    # a zip written into the mod folder must not end up inside the next one
+    items = pack.collect([Path(s) for s in a.sources], skip=[out, out.with_name(out.name + ".sha256")])
     if not items:
         raise ValueError("nothing to pack: no files in " + ", ".join(a.sources))
     problems, notes = pack.check(items, pack.personal_terms(a.term))
@@ -58,7 +62,6 @@ def cmd_pack(a) -> int:
     if problems and not a.force:
         print(f"{len(problems)} problem(s), nothing written. Fix them or pass --force.")
         return 1
-    out = Path(a.output)
     digest = pack.write_zip(items, out, a.prefix)
     print(f"{out} ({len(items)} files, {out.stat().st_size // 1024} KB)\nsha256 {digest}")
     return 0
@@ -77,9 +80,12 @@ def cmd_vt(a) -> int:
     path = Path(a.file)
     if not key:
         print(f"No API key (set VT_API_KEY or pass --key). Look the file up by hand:\n"
-              f"{virustotal.GUI.format(virustotal.sha256(path))}")
+              f"{virustotal.GUI.format(pack.sha256(path))}")
         return 2
     r = virustotal.report(path, key, upload=a.upload)
+    if r["pending"]:
+        print(f"Uploaded, VirusTotal is still scanning it. Run `modrelease vt` again (without --upload) in a few minutes.\n{r['link']}")
+        return 2
     if not r["known"]:
         print(f"VirusTotal has not seen this file. Run again with --upload.\n{r['link']}")
         return 2
@@ -95,13 +101,13 @@ def cmd_appeal(a) -> int:
     path = Path(a.file)
     summary = ""
     key = a.key or os.environ.get("VT_API_KEY")
-    link = virustotal.GUI.format(virustotal.sha256(path))
+    link = virustotal.GUI.format(pack.sha256(path))
     if key:
         r = virustotal.report(path, key)
         if r["known"]:
             n, total = len(r["flagged"]), sum(r["stats"].values())
             names = ", ".join(f"{e} ({v})" for e, v in r["flagged"])
-            summary = f"{n} of {total} engines flag it" + (f": {names}" if names else "") + ", all others are clean"
+            summary = f"{n} of {total} engines flag it: {names}, all others are clean" if n else f"none of {total} engines flag it"
     print(appeal.email(mod_url=a.mod, file_name=a.name or path.stem, username=a.user, source=a.source,
                        vt_link=link, vt_summary=summary, contents=appeal.executables(path), build=a.build))
     return 0
@@ -151,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     try:
         return a.fn(a)
-    except (FileNotFoundError, ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as e:  # OSError covers locked files and no network
         print(f"error: {e}", file=sys.stderr)
         return 2
 
