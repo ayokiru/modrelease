@@ -17,7 +17,8 @@
   <a href="#commands">Commands</a> &nbsp;·&nbsp;
   <a href="#modreleasetoml">Config</a> &nbsp;·&nbsp;
   <a href="#github-action">GitHub Action</a> &nbsp;·&nbsp;
-  <a href="#limits">Limits</a>
+  <a href="#limits">Limits</a> &nbsp;·&nbsp;
+  <a href="https://pypi.org/project/modrelease/">PyPI</a>
 </p>
 
 Config files and logs in a mod archive keep `C:\Users\yourname\...` paths, tools and their `.pdb` files keep the
@@ -70,7 +71,8 @@ modrelease check MyMod/
 modrelease pack MyMod/ -o MyMod-1.0.zip
 ```
 
-`check` shows what would leak. `pack` runs the same check and writes the zip with its `.sha256`. Needs Python 3.11+;
+The package is on [PyPI](https://pypi.org/project/modrelease/). `check` shows what would leak, and `pack` runs the
+same check and writes the zip with its `.sha256`. Needs Python 3.11+;
 videos also need `ffmpeg` on PATH.
 
 <p align="center"><img src="docs/demo.gif" alt="modrelease pack stops on a log with the login in it and a screenshot with EXIF, clean strips the screenshot, then pack writes the zip and appeal writes the Nexus email" width="100%"></p>
