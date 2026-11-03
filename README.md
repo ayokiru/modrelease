@@ -5,7 +5,7 @@ byte-identical every time, and writes its SHA-256. Two more strip screenshots an
 zip up on VirusTotal. If Nexus Mods quarantines your upload, `modrelease appeal` writes the email that gets it reviewed.
 
 ```
-pipx install modrelease
+pipx install git+https://github.com/ayokiru/modrelease
 ```
 
 Python 3.10+, works on Windows, Linux and macOS. Videos need `ffmpeg` on PATH.
