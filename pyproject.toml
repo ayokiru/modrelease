@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "modrelease"
 version = "0.2.0"
 description = "Get a game mod ready for release: no personal data or secrets in the files, reproducible zip, VirusTotal check, Nexus Mods upload and quarantine email"
-readme = "README.md"
+readme = "PYPI.md"
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = ["pillow>=10"]
@@ -15,6 +15,8 @@ classifiers = ["Programming Language :: Python :: 3", "Environment :: Console", 
 
 [project.urls]
 Homepage = "https://github.com/ayokiru/modrelease"
+Documentation = "https://github.com/ayokiru/modrelease#readme"
+Issues = "https://github.com/ayokiru/modrelease/issues"
 
 [project.scripts]
 modrelease = "modrelease.cli:main"
