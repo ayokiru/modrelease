@@ -55,7 +55,7 @@ class ScanTests(unittest.TestCase):
 
     def test_pieces_overlap(self):
         with mock.patch.object(pack, "CHUNK", 8):
-            terms, users = scan(b"xxxxxxxxxxx C:\\Users\\jdoe-laptop\\x and jdoe", ["jdoe"])
+            terms, users, _ = scan(b"xxxxxxxxxxx C:\\Users\\jdoe-laptop\\x and jdoe", ["jdoe"])
         self.assertEqual(terms, ["jdoe"])
         self.assertEqual(users, {b"jdoe-laptop"})  # not "jdo" and "jdoe-l" from the cut
 
@@ -63,6 +63,30 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(scan(b'{"p": "C:\\\\Users\\\\alice\\\\x"}', [])[1], {b"alice"})  # JSON-escaped path
         self.assertEqual(scan(b"C:\\Users\\Public\\Documents", [])[1], set())            # shared folder
         self.assertEqual(scan(b"see https://github.com/users/bob/repos", [])[1], set())  # a web address
+
+
+class SecretAndDevFileTests(unittest.TestCase):
+    def test_secrets_are_named_not_shown(self):
+        cases = {
+            b"hook=https://discord.com/api/webhooks/123456789012/AbCdEfGhIjKlMnOpQrStUvWxYz0123": "a Discord webhook URL",
+            b"token: ghp_" + b"a1B2" * 9: "a GitHub token",
+            b"aws_key=AKIAZ7Q3KXP2LMN4R5T6": "an AWS access key",
+            b"-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA" + b"x" * 40: "a private key",
+        }
+        for data, label in cases.items():
+            self.assertEqual(scan(data, [])[2], [label], data[:20])
+
+    def test_lookalikes_are_not_secrets(self):
+        for data in (b"AKIAIOSFODNN7EXAMPLE",                     # AWS's documentation key
+                     b"-----BEGIN PRIVATE KEY-----\x00",          # the PEM header string inside OpenSSL
+                     b"https://discord.com/api/webhooks/{id}/{token}"):
+            self.assertEqual(scan(data, [])[2], [], data)
+
+    def test_dev_files_and_folders(self):
+        _, notes = pack.check_file("Mod.pdb", io.BytesIO(b""), [])
+        self.assertIn("debug symbols", notes[0].what)
+        _, notes = pack.check_names(["Saved/Logs/x.log", "Saved/Config/y.ini", "Paks/mod.pak"])
+        self.assertEqual([n.file for n in notes], ["Saved/"])  # one note per folder, not per file
 
 
 class PackTests(Tmp):

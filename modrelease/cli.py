@@ -39,6 +39,9 @@ def cmd_check(a) -> int:
                         pr, no = pack.check_file(info.filename, f, needles)
                     problems += pr
                     notes += no
+                pr, no = pack.check_names([i.filename for i in z.infolist() if not i.is_dir()])
+                problems += pr
+                notes += no
                 dates = {i.date_time for i in z.infolist()}
                 if len(dates) > 1:  # one fixed date for every file is what reproducible packers write
                     notes.append(pack.Finding(p.name, f"real file dates in the zip (newest {max(dates)[:3]}): repack with `modrelease pack`"))

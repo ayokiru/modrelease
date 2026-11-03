@@ -27,6 +27,23 @@ URL_BEFORE = re.compile(rb"://[^\s\"'<>]*$")  # "/users/x" inside a web address 
 SHARED_USER_DIRS = {b"public", b"default", b"all users", b"default user"}
 CHUNK = 16 << 20   # files are read in pieces, so a 4 GB pak needs about 32 MB of memory
 TINY, SHORT = 4, 6  # "max" counts only inside a path, "jdoe" only as a whole word, see term_needles
+# credentials that end up in mod configs and tools; the finding names the kind, never the value
+# credentials that end up in mod configs and tools; the finding names the kind, never the value.
+# Each regex runs only on pieces that contain one of its lowercase anchors, which keeps big files fast.
+SECRETS = [(label, anchors, re.compile(p)) for label, anchors, p in (
+    ("a Discord webhook URL", [b"/api/webhooks/"], rb"discord(?:app)?\.com/api/webhooks/\d{5,}/[\w-]{20,}"),
+    ("a GitHub token", [b"ghp_", b"gho_", b"ghu_", b"ghs_", b"ghr_", b"github_pat_"],
+     rb"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_\w{60,})"),
+    ("an AWS access key", [b"akia", b"asia"], rb"\b(?:AKIA|ASIA)(?!IOSFODNN7EXAMPLE)[0-9A-Z]{16}\b"),  # docs example is fine
+    ("a Google API key", [b"aiza"], rb"\bAIza[\w-]{35}\b"),
+    ("a Slack token", [b"xox"], rb"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+    ("a private key", [b"private key-----"],
+     rb"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----\s*[A-Za-z0-9+/=]{40}"),
+)]
+DEBUG_EXT = {".pdb"}
+SOURCE_EXT = {".psd", ".blend", ".blend1", ".max", ".ma", ".mb", ".spp", ".kra", ".xcf",
+              ".uproject", ".sln", ".csproj", ".vcxproj"}
+DEV_DIRS = {"saved", "intermediate", "deriveddatacache", ".vs", ".idea"}  # engine and IDE work folders
 
 
 @dataclass
@@ -80,10 +97,10 @@ def term_needles(terms: list[str]) -> list[tuple[str, list[bytes], re.Pattern | 
     return out
 
 
-def scan_stream(f: BinaryIO, needles: list[tuple[str, list[bytes], re.Pattern | None]]) -> tuple[list[str], set[bytes]]:
-    """-> (terms found, user folder names) for one file, read in CHUNK pieces that overlap a little."""
+def scan_stream(f: BinaryIO, needles: list[tuple[str, list[bytes], re.Pattern | None]]) -> tuple[list[str], set[bytes], list[str]]:
+    """-> (terms found, user folder names, kinds of secrets) for one file, read in CHUNK pieces that overlap a little."""
     overlap = 256 + max((len(n) for _, ns, _ in needles for n in ns), default=0)
-    found, users = [], set()
+    found, users, secrets = [], set(), []
     prev, block = b"", f.read(CHUNK)
     while block:
         nxt = f.read(CHUNK)
@@ -98,8 +115,22 @@ def scan_stream(f: BinaryIO, needles: list[tuple[str, list[bytes], re.Pattern | 
                 if (nxt and m.end() == len(buf)) or URL_BEFORE.search(buf, max(0, m.start() - 100), m.start()):
                     continue
                 users.add(m.group(1).lower())
+        for label, anchors, p in SECRETS:
+            if label not in secrets and _secret_near(buf, low, anchors, p):
+                secrets.append(label)
         prev, block = buf[-overlap:], nxt
-    return found, users - SHARED_USER_DIRS
+    return found, users - SHARED_USER_DIRS, secrets
+
+
+def _secret_near(buf: bytes, low: bytes, anchors: list[bytes], p: re.Pattern) -> bool:
+    """The regex only runs in a small window around each anchor: a full regex pass per piece is several times slower."""
+    for a in anchors:
+        i = low.find(a)
+        while i != -1:
+            if p.search(buf, max(0, i - 64), i + 512):
+                return True
+            i = low.find(a, i + 1)
+    return False
 
 
 def image_metadata(name: str, data: bytes) -> list[Finding]:
@@ -123,12 +154,13 @@ def check_file(name: str, f: BinaryIO, needles: list[tuple[str, list[bytes], re.
         data = f.read()
         problems += image_metadata(name, data)
         f = io.BytesIO(data)
-    found, users = scan_stream(f, needles)
+    found, users, secrets = scan_stream(f, needles)
     for t, _, _ in needles:  # your own login as a user folder (C:\Users\max at the end of a line) is a problem
         if t not in found and t.lower().encode("utf-8") in users:
             found.append(t)
     users -= {t.lower().encode("utf-8") for t, _, _ in needles}
     problems = [Finding(name, f"contains {t!r}") for t in found] + problems
+    problems += [Finding(name, f"contains {s}: remove it and revoke it, it is no longer secret") for s in secrets]
     notes = []
     if users:
         shown = ", ".join(u.decode("utf-8", "replace") for u in sorted(users))
@@ -137,6 +169,19 @@ def check_file(name: str, f: BinaryIO, needles: list[tuple[str, list[bytes], re.
         notes.append(Finding(name, "archive inside the archive: Nexus quarantines nested archives"))
     if ext in EXECUTABLES:
         notes.append(Finding(name, "executable: Nexus quarantines these for a manual review (`modrelease appeal`)"))
+    if ext in DEBUG_EXT:
+        notes.append(Finding(name, "debug symbols: players don't need them and they hold the build folder path"))
+    if ext in SOURCE_EXT:
+        notes.append(Finding(name, "a source/project file: players don't need it, exclude it unless you ship it on purpose"))
+    return problems, notes
+
+
+def check_names(names: list[str]) -> tuple[list[Finding], list[Finding]]:
+    """Checks on the list of paths inside the archive (as opposed to the file contents)."""
+    problems, notes = [], []
+    dev = sorted({p for n in names for p in n.split("/")[:-1] if p.lower() in DEV_DIRS})
+    for d in dev:
+        notes.append(Finding(d + "/", "an engine or IDE work folder: players don't need it"))
     return problems, notes
 
 
@@ -170,7 +215,8 @@ def check(items: list[tuple[Path, str]], terms: list[str]) -> tuple[list[Finding
             pr, no = check_file(arc, f, needles)
         problems += pr
         notes += no
-    return problems, notes
+    pr, no = check_names([arc for _, arc in items])
+    return problems + pr, notes + no
 
 
 def sha256(path: Path) -> str:
