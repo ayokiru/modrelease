@@ -23,6 +23,9 @@ STDIN_HOOKS = {"pre-push", "post-rewrite", "reference-transaction"}
 TOP_KEYS = {"deny", "persona"}
 PERSONA_KEYS = {"path", "name", "email", "utc", "refuse_trailers"}
 ZERO = "0" * 40
+REFUSED = 3  # a refusal, as opposed to a crash (1), a bad config (2) or no Python at all (127)
+BROKEN = ("[modrelease guard] hook failed. Skip once: --no-verify. "
+          "Turn off: modrelease guard uninstall, or git config --global --unset core.hooksPath")
 # Windows default and shared accounts: as automatic terms they would block code like `def get(user):`
 GENERIC = {d.decode() for d in pack.SHARED_USER_DIRS} | {"user", "admin", "owner", "administrator"}
 IDENT = re.compile(r"^(.*) <(.*)> \d+ ([+-]\d{4})$")
@@ -265,19 +268,21 @@ def run_hook(name: str, args: list[str]) -> int:
             print(f"  ! {p}", file=sys.stderr)
         if hint:
             print(hint, file=sys.stderr)
-        return 1
+        return REFUSED
     return 0
 
 
 def hook_script(name: str, prior: str | None) -> str:
     """A small sh script for Git Bash, Linux and macOS: the check runs in Python, then the hook this one replaced."""
-    py = Path(sys.executable).as_posix()
+    py = shlex.quote(Path(sys.executable).as_posix())
     inp = ' < "$tmp"' if name in STDIN_HOOKS else ""
     lines = ["#!/bin/sh", MARKER]
     if inp:
         lines += ['tmp=$(mktemp) || exit 1', "trap 'rm -f \"$tmp\"' EXIT", 'cat > "$tmp"']
     if name in GUARDED:
-        lines.append(f'"{py}" -m modrelease guard hook {name} "$@"{inp} || exit 1')
+        # modrelease.guard, not the CLI: the CLI imports the network code and every commit would wait for it
+        lines += [f'{py} -m modrelease.guard hook {name} "$@"{inp}', "rc=$?",
+                  f'[ $rc = 0 ] || {{ [ $rc = {REFUSED} ] || echo {shlex.quote(BROKEN)} >&2; exit 1; }}']
     # without a previous hooksPath the repo's own .git/hooks run (--git-path hooks would point back here)
     lines += [f"d={shlex.quote(prior or '')}",
               '[ -n "$d" ] || d="$(git rev-parse --git-common-dir)/hooks"',
@@ -368,3 +373,19 @@ def check(path: str) -> int:
         print("(no persona for this folder: identities and time zones are listed, not judged)")
     print(f"{len(problems)} problem(s)" if problems else "clean")
     return 1 if problems else 0
+
+
+def main(argv: list[str]) -> int:
+    """python -m modrelease.guard hook NAME [ARGS]: what the hook scripts run."""
+    if len(argv) < 2 or argv[0] != "hook":
+        print("usage: python -m modrelease.guard hook NAME [ARGS...]", file=sys.stderr)
+        return 2
+    try:
+        return run_hook(argv[1], argv[2:])
+    except (OSError, ValueError, RuntimeError, tomllib.TOMLDecodeError) as e:
+        print(f"{PREFIX} error: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -206,9 +206,7 @@ def cmd_guard(a) -> int:
         return guard.install(a.apply)
     if a.action == "uninstall":
         return guard.uninstall()
-    if a.action == "check":
-        return guard.check(a.path)
-    return guard.run_hook(a.name, a.args)
+    return guard.check(a.path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -284,9 +282,6 @@ def main(argv: list[str] | None = None) -> int:
     g.add_parser("uninstall", help="remove the hooks and undo only what install changed")
     c = g.add_parser("check", help="audit a repo's history: deny list, other identities, non-UTC dates")
     c.add_argument("path", nargs="?", default=".")
-    h = g.add_parser("hook", help="run by the hook scripts")
-    h.add_argument("name")
-    h.add_argument("args", nargs=argparse.REMAINDER)
     s.set_defaults(fn=cmd_guard)
 
     a = p.parse_args(argv)

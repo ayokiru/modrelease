@@ -5,6 +5,7 @@ import io
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -211,6 +212,42 @@ class ChainTests(GuardBase):
         with redirect_stdout(io.StringIO()):
             main(["guard", "uninstall"])
         self.assertEqual(self.global_hooks(), "")
+
+    def test_python_path_with_a_space(self):
+        wrapper = self.d / "py thon $x" / "python"  # a space and a $ the shell must not expand
+        wrapper.parent.mkdir()
+        wrapper.write_text(f"#!/bin/sh\nexec '{Path(sys.executable).as_posix()}' \"$@\"\n", newline="\n")
+        wrapper.chmod(0o755)
+        with mock.patch.object(guard.sys, "executable", str(wrapper)):
+            self.install()
+        r = self.repo("alias/mod")
+        self.assertEqual(self.commit(r).returncode, 0)
+        self.git("config", "user.email", "alice@example.com", cwd=r)
+        self.assertIn("alice@example.com", self.commit(r).stderr)
+
+    def test_broken_hook_says_how_to_get_out(self):
+        self.install()
+        r = self.repo("alias/mod")
+        self.git("config", "user.email", "alice@example.com", cwd=r)
+        refused = self.commit(r)
+        self.assertNotIn("--no-verify", refused.stderr)  # a refusal must not advertise the way around it
+        (self.d / "cfg" / "guard.toml").write_text("deny = []\ntypo = 1\n")
+        broken = self.commit(r)
+        self.assertNotEqual(broken.returncode, 0)
+        self.assertIn("unknown setting(s) typo", broken.stderr)
+        self.assertIn("Skip once: --no-verify", broken.stderr)
+
+    def test_uninstall_leaves_other_files_alone(self):
+        self.install()
+        mine = self.d / "cfg" / "hooks" / "notes.txt"
+        mine.write_text("not a hook of ours")
+        with redirect_stdout(io.StringIO()):
+            main(["guard", "uninstall"])
+        self.assertEqual([p.name for p in (self.d / "cfg" / "hooks").iterdir()], ["notes.txt"])
+
+    def test_hook_entry_does_not_load_the_cli(self):
+        code = "import sys, modrelease.guard; sys.exit(any(m in sys.modules for m in ('modrelease.cli', 'urllib.request')))"
+        self.assertEqual(subprocess.run([sys.executable, "-c", code]).returncode, 0)
 
     def test_foreign_file_in_hooks_folder_is_not_overwritten(self):
         (self.d / "cfg" / "hooks").mkdir(parents=True)
