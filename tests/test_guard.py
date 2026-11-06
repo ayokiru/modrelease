@@ -189,6 +189,8 @@ class ChainTests(GuardBase):
         old.mkdir()
         (old / "pre-commit").write_text("#!/bin/sh\necho refused by the old hook >&2\nexit 1\n", newline="\n")
         (old / "post-merge").write_text("#!/bin/sh\nexit 0\n", newline="\n")
+        for h in old.iterdir():
+            h.chmod(0o755)  # git, and the chain, skip hooks that aren't executable (matters on Linux and macOS)
         self.git("config", "--global", "core.hooksPath", old.as_posix(), cwd=self.d)
         out = self.install()
         self.assertIn(str(old.as_posix()), out)
