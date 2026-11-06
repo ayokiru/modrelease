@@ -154,7 +154,14 @@ class CommitMsgTests(HookCase):
 
     def test_deny_list_in_message(self):
         self.refused(self.commit(self.r, msg="thanks Jane Roe"), "the message contains 'Jane Roe'")
-        self.refused(self.commit(self.r, msg="#42 thanks Jane Roe"), "'Jane Roe'")  # -m keeps lines starting with #
+
+    def test_editor_commit_renaming_a_leaked_file(self):
+        self.commit(self.r, "x\n", "x", "--no-verify", file="Jane Roe notes.txt")
+        self.git("mv", "Jane Roe notes.txt", "notes.txt", cwd=self.r)
+        editor = self.d / "editor.sh"  # git's template lists the old name in comment lines
+        editor.write_text('#!/bin/sh\n{ echo "rename the notes"; cat "$1"; } > "$1.new" && mv "$1.new" "$1"\n', newline="\n")
+        r = self.git("commit", "-q", cwd=self.r, env={"GIT_EDITOR": f"sh '{editor.as_posix()}'"})
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_verbose_commit_that_removes_a_leak(self):
         self.commit(self.r, "by Jane Roe\n", "x", "--no-verify")

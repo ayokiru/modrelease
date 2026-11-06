@@ -247,8 +247,11 @@ def run_hook(name: str, args: list[str]) -> int:
         problems = pending_identity(persona) + [f"the staged changes add {t!r}" for t in staged_added(needles)]
     elif name == "commit-msg":
         # `git commit -v` puts the diff under a scissors line and git drops it: a commit that removes a leak must pass.
-        # Lines starting with # stay: with -m git keeps them ("#42 fixed").
-        msg = SCISSORS.split(Path(args[0]).read_text("utf-8", "replace"))[0]
+        # Comment lines go too: in an editor commit they are git's own template, which lists the files being renamed
+        # away from a leaked name. A `-m "#42 ..."` line git keeps is checked again by pre-push.
+        comment = git("config", "core.commentChar", check=False).decode("utf-8", "replace").strip() or "#"
+        text = SCISSORS.split(Path(args[0]).read_text("utf-8", "replace"))[0]
+        msg = "".join(ln for ln in text.splitlines(True) if not ln.startswith(comment))
         if persona.get("refuse_trailers", True) and TRAILER.search(msg):
             problems.append("the message has a Co-Authored-By or AI attribution line")
         problems += [f"the message contains {t!r}" for t in found(msg.encode(), needles)]
