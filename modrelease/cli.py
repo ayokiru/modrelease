@@ -7,6 +7,7 @@
   modrelease vt     X.zip           VirusTotal result for the file (VT_API_KEY)
   modrelease nexus  X.zip ...       upload it as a new version of a file on Nexus Mods (NEXUS_API_KEY)
   modrelease appeal X.zip ...       the email that gets a quarantined Nexus file reviewed
+  modrelease guard  install|check   git hooks that keep your alias's commits free of your real identity
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ import tomllib
 import zipfile
 from pathlib import Path
 
-from . import __version__, appeal, clean, nexus, pack, virustotal
+from . import __version__, appeal, clean, guard, nexus, pack, virustotal
 
 
 CONFIG = "modrelease.toml"
@@ -200,6 +201,16 @@ def cmd_appeal(a) -> int:
     return 0
 
 
+def cmd_guard(a) -> int:
+    if a.action == "install":
+        return guard.install(a.apply)
+    if a.action == "uninstall":
+        return guard.uninstall()
+    if a.action == "check":
+        return guard.check(a.path)
+    return guard.run_hook(a.name, a.args)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="modrelease", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--version", action="version", version=f"modrelease {__version__}")
@@ -264,9 +275,23 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--key", help="VirusTotal API key (default: VT_API_KEY)")
     s.set_defaults(fn=cmd_appeal)
 
+    s = sub.add_parser("guard", help="git hooks that stop commits leaking your real identity into an alias's repos",
+                       description="Personas and the deny list live in ~/.config/modrelease/guard.toml "
+                                   "(MODRELEASE_CONFIG_DIR moves the folder).")
+    g = s.add_subparsers(dest="action", required=True)
+    i = g.add_parser("install", help="write the hooks; prints the git command that turns them on")
+    i.add_argument("--apply", action="store_true", help="also set core.hooksPath in your global git config")
+    g.add_parser("uninstall", help="remove the hooks and undo only what install changed")
+    c = g.add_parser("check", help="audit a repo's history: deny list, other identities, non-UTC dates")
+    c.add_argument("path", nargs="?", default=".")
+    h = g.add_parser("hook", help="run by the hook scripts")
+    h.add_argument("name")
+    h.add_argument("args", nargs=argparse.REMAINDER)
+    s.set_defaults(fn=cmd_guard)
+
     a = p.parse_args(argv)
     try:
-        a.cfg = load_config(a.config)
+        a.cfg = {} if a.cmd == "guard" else load_config(a.config)  # a hook must not trip over a mod's modrelease.toml
         return a.fn(a)
     except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, tomllib.TOMLDecodeError) as e:  # OSError covers locked files and no network
         print(f"error: {e}", file=sys.stderr)
