@@ -112,30 +112,82 @@ def pending_identity(persona: dict) -> list[str]:
     return out
 
 
-def staged_added() -> bytes:
-    # shortcut: the whole staged diff is held in memory, fine for source repos, not for multi-GB binaries
-    diff = git("diff", "--cached", "--no-color", "--no-ext-diff", "--text", "-U0")
-    return b"\n".join(line for line in diff.splitlines() if line.startswith(b"+"))
+def git_lines(args: list[str], cwd=None):
+    """git's output line by line, a long line in CHUNK pieces, so a history full of built paks never sits in memory."""
+    with subprocess.Popen(["git", *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as p:
+        while piece := p.stdout.readline(pack.CHUNK):
+            yield piece
+        err = p.stderr.read()
+    if p.returncode:
+        raise RuntimeError(f"git {args[0]}: {err.decode('utf-8', 'replace').strip()}")
+
+
+class Added:
+    """Deny-list terms in the added lines of a diff fed piece by piece; holds at most about CHUNK bytes."""
+    def __init__(self, needles):
+        self.needles, self.buf, self.terms, self.plus, self.line_start = needles, bytearray(), [], False, True
+
+    def feed(self, piece: bytes) -> None:
+        if self.line_start:
+            self.plus = piece.startswith(b"+")  # "+++ b/name" counts too: a new file name can leak
+        self.line_start = piece.endswith(b"\n")
+        if self.plus:
+            self.buf += piece
+            if len(self.buf) >= pack.CHUNK:
+                self._scan()
+                del self.buf[:-4096]  # the tail is scanned again, so a term cut in two is still found
+
+    def done(self) -> list[str]:
+        self._scan()
+        return self.terms
+
+    def _scan(self) -> None:
+        self.terms += [t for t in found(bytes(self.buf), self.needles) if t not in self.terms]
+
+
+DIFF = ["--no-color", "--no-ext-diff", "--no-renames", "--text", "-U0"]  # a rename shows its new name as added
+
+
+def staged_added(needles) -> list[str]:
+    added = Added(needles)
+    for piece in git_lines(["diff", "--cached", *DIFF]):
+        added.feed(piece)
+    return added.done()
+
+
+def commits(revs: list[str], needles, cwd=None):
+    """-> (hash, author, email, date, committer, email, date, message, terms in added lines) per commit."""
+    fmt = COMMIT + "%h%x00%an%x00%ae%x00%ai%x00%cn%x00%ce%x00%ci%x00%B%x00"
+    head, fields, added = None, None, None
+    for piece in git_lines(["log", "-p", *DIFF, f"--format={fmt}", *revs], cwd):
+        if piece.startswith(COMMIT.encode()):
+            if added:
+                yield *fields, added.done()
+            head, added = piece[len(COMMIT):], None
+        elif added:
+            added.feed(piece)
+        elif head is not None:
+            head += piece  # a message over several lines
+        if not added and head is not None and head.count(b"\x00") >= 8:
+            fields = [f.decode("utf-8", "replace") for f in head.split(b"\x00", 8)[:8]]
+            head, added = None, Added(needles)
+    if added:
+        yield *fields, added.done()
 
 
 def audit(revs: list[str], persona: dict | None, needles, cwd=None) -> tuple[list[str], set[str], set[str]]:
     """-> (problems, identities, offsets) for the commits `revs` select: identity and dates against the persona,
     deny-list strings in identities, messages and added lines."""
-    fmt = COMMIT + "%h%x00%an%x00%ae%x00%ai%x00%cn%x00%ce%x00%ci%x00%B%x00"
-    out = git("log", "--no-color", "--no-ext-diff", "-p", "--text", "-U0", f"--format={fmt}", *revs, cwd=cwd)
     problems, idents, offsets = [], set(), set()
-    for chunk in out.split(COMMIT.encode())[1:]:
-        *head, diff = chunk.split(b"\x00", 8)
-        h, an, ae, ad, cn, ce, cd, msg = (f.decode("utf-8", "replace") for f in head)
+    for h, an, ae, ad, cn, ce, cd, msg, terms in commits(revs, needles, cwd):
         idents |= {f"{an} <{ae}>", f"{cn} <{ce}>"}
         offsets |= {ad[-5:], cd[-5:]}
         if persona:
             problems += [f"{h}: {p}" for p in _identity_problems("author", an, ae, ad[-5:], persona)
                          + _identity_problems("committer", cn, ce, cd[-5:], persona)]
-        added = b"\n".join(line for line in diff.splitlines() if line.startswith(b"+"))
         for t in found(f"{an} {ae} {cn} {ce}\n{msg}".encode(), needles):
             problems.append(f"{h}: {t!r} in the author, committer or message")
-        for t in found(added, needles):
+        for t in terms:
             problems.append(f"{h}: adds {t!r}")
     return problems, idents, offsets
 
@@ -149,7 +201,7 @@ def run_hook(name: str, args: list[str]) -> int:
     needles = pack.term_needles(deny_terms(cfg, persona))
     problems, hint = [], ""
     if name == "pre-commit":
-        problems = pending_identity(persona) + [f"the staged changes add {t!r}" for t in found(staged_added(), needles)]
+        problems = pending_identity(persona) + [f"the staged changes add {t!r}" for t in staged_added(needles)]
     elif name == "commit-msg":
         msg = Path(args[0]).read_text("utf-8", "replace")
         msg = "\n".join(line for line in msg.splitlines() if not line.startswith("#"))

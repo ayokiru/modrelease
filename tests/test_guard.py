@@ -11,7 +11,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from modrelease import guard
+from modrelease import guard, pack
 from modrelease.cli import main
 
 ALIAS, EMAIL = "myalias", "123+myalias@users.noreply.github.com"
@@ -111,6 +111,11 @@ class PreCommitTests(HookCase):
             f.write("contact jane.roe@example.com".encode("utf-16-le"))
         self.git("add", "-A", cwd=self.r)
         self.refused(self.git("commit", "-q", "-m", "x", cwd=self.r), "jane.roe@example.com")
+
+    def test_rename_to_a_denied_name_refused(self):
+        self.commit(self.r)
+        self.git("mv", "a.txt", "Jane Roe notes.txt", cwd=self.r)
+        self.refused(self.git("commit", "-q", "-m", "rename", cwd=self.r), "'Jane Roe'")
 
     def test_login_and_home_are_denied_automatically(self):
         self.refused(self.commit(self.r, f"log /home/{getpass.getuser()}/x\n"), getpass.getuser())
@@ -260,6 +265,24 @@ class CheckTests(GuardBase):
         self.assertIn("adds 'Jane Roe'", out)
         self.assertIn("author is alice", out)
         self.assertIn("+0300", out)
+
+    def test_history_is_read_in_pieces(self):
+        r = self.repo("alias/mod")
+        self.commit(r, "x" * 5000 + " by Jane Roe " + "y" * 5000 + "\n", "first line\n\nthird line names jane.roe@example.com",
+                    "--no-verify")
+        with mock.patch.object(pack, "CHUNK", 64):
+            code, out = self.run_check(r)
+        self.assertEqual(code, 1)
+        self.assertIn("adds 'Jane Roe'", out)
+        self.assertIn("'jane.roe@example.com' in the author, committer or message", out)
+
+    def test_rename_to_a_denied_name(self):
+        r = self.repo("alias/mod")
+        self.commit(r)
+        self.git("mv", "a.txt", "Jane Roe notes.txt", cwd=r)
+        self.git("commit", "-q", "--no-verify", "-m", "rename", cwd=r)
+        code, out = self.run_check(r)
+        self.assertIn("adds 'Jane Roe'", out)
 
     def test_clean_history(self):
         r = self.repo("alias/mod")
