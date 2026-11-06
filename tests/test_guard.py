@@ -34,11 +34,11 @@ class GuardBase(unittest.TestCase):
             os.environ.pop(k)
         self.config()
 
-    def config(self, persona_extra: str = "", utc: str = "true"):
+    def config(self, persona_extra: str = "", utc: str = "true", name: str = ALIAS, deny: str = '"Jane Roe", "jane.roe@example.com"'):
         (self.d / "cfg").mkdir(exist_ok=True)
         (self.d / "cfg" / "guard.toml").write_text(
-            f"deny = [\"Jane Roe\", \"jane.roe@example.com\"]\n\n[[persona]]\npath = '{(self.d / 'alias').as_posix()}'\n"
-            f"name = \"{ALIAS}\"\nemail = \"{EMAIL}\"\nutc = {utc}\n{persona_extra}")
+            f"deny = [{deny}]\n\n[[persona]]\npath = '{(self.d / 'alias').as_posix()}'\n"
+            f"name = \"{name}\"\nemail = \"{EMAIL}\"\nutc = {utc}\n{persona_extra}", encoding="utf-8")
 
     def git(self, *args, cwd, env=None):
         return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
@@ -114,6 +114,13 @@ class PreCommitTests(HookCase):
 
     def test_login_and_home_are_denied_automatically(self):
         self.refused(self.commit(self.r, f"log /home/{getpass.getuser()}/x\n"), getpass.getuser())
+
+    def test_non_ascii_persona_name(self):
+        # git prints UTF-8; with PYTHONUTF8=0 a text-mode read on Windows decodes it with the ANSI code page
+        self.config(name="Zoë")
+        self.git("config", "user.name", "Zoë", cwd=self.r)
+        r = self.commit(self.r, env={"PYTHONUTF8": "0"})
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_outside_persona_folders_nothing_is_checked(self):
         r = self.repo("work/app", "alice", "alice@example.com")

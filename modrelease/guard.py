@@ -104,8 +104,7 @@ def pending_identity(persona: dict) -> list[str]:
     """What the next commit would record: `git var` sees -c user.email, --author, --date, GIT_* variables and TZ."""
     out = []
     for who, var in (("author", "GIT_AUTHOR_IDENT"), ("committer", "GIT_COMMITTER_IDENT")):
-        r = subprocess.run(["git", "var", var], capture_output=True, text=True)
-        m = IDENT.match(r.stdout.strip())
+        m = IDENT.match(git("var", var, check=False).decode("utf-8", "replace").strip())
         if not m:
             out.append(f"no {who} identity set: git config user.name / user.email")
             continue
