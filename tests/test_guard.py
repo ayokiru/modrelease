@@ -127,6 +127,14 @@ class PreCommitTests(HookCase):
         r = self.commit(self.r, env={"PYTHONUTF8": "0"})
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_worktree_outside_the_alias_folder(self):
+        self.commit(self.r)
+        wt = self.d / "elsewhere" / "wt"
+        self.git("worktree", "add", "-q", "-b", "feature", str(wt), cwd=self.r)
+        r = self.git("-c", "user.email=agent@example.com", "commit", "-q", "--allow-empty", "-m", "x", cwd=wt)
+        self.refused(r, "agent@example.com")
+        self.assertEqual(self.git("commit", "-q", "--allow-empty", "-m", "x", cwd=wt).returncode, 0)
+
     def test_outside_persona_folders_nothing_is_checked(self):
         r = self.repo("work/app", "alice", "alice@example.com")
         res = self.commit(r, "made by Jane Roe\n", "x\n\nCo-Authored-By: bot <bot@example.com>", env={"TZ": "UTC-3"})

@@ -88,6 +88,15 @@ def persona_for(cfg: dict, where) -> dict | None:
     return best
 
 
+def persona_here(cfg: dict, where) -> dict | None:
+    """Like persona_for, but a linked worktree outside the alias folder counts as part of the repo it came from."""
+    per = persona_for(cfg, where)
+    if per or not cfg["persona"]:
+        return per
+    common = git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=where, check=False).decode("utf-8", "replace").strip()
+    return persona_for(cfg, Path(common).parent) if common else None
+
+
 def git(*args: str, cwd=None, check: bool = True) -> bytes:
     r = subprocess.run(["git", *args], cwd=cwd, capture_output=True)
     if check and r.returncode:
@@ -225,7 +234,7 @@ def all_tags(persona: dict | None, needles, cwd=None) -> tuple[list[str], set[st
 def run_hook(name: str, args: list[str]) -> int:
     sys.stderr.reconfigure(errors="replace")  # a name the console code page lacks must not crash the hook
     cfg = load()
-    persona = persona_for(cfg, os.getcwd())
+    persona = persona_here(cfg, os.getcwd())
     if persona is None or name not in GUARDED:
         return 0
     needles = pack.term_needles(deny_terms(cfg, persona))
@@ -344,7 +353,7 @@ def uninstall() -> int:
 
 def check(path: str) -> int:
     cfg = load()
-    persona = persona_for(cfg, path)
+    persona = persona_here(cfg, path)
     needles = pack.term_needles(deny_terms(cfg, persona))
     problems, idents, offsets = audit(["--all"], persona, needles, cwd=path)
     p, i, o = all_tags(persona, needles, cwd=path)
