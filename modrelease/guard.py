@@ -29,7 +29,8 @@ IDENT = re.compile(r"^(.*) <(.*)> \d+ ([+-]\d{4})$")
 TRAILER = re.compile(r"(?im)^(?:co-authored-by|generated-by|assisted-by|ai-assisted|made-with)\s*:"
                      r"|generated (?:with|by) \S*\s*(?:claude|chatgpt|copilot|cursor|codex|gemini|aider)"
                      r"|noreply@anthropic\.com")
-COMMIT = "\x1emodrelease-commit\x1f"  # splits `git log -p` output; a blob would need these exact bytes to confuse it
+SCISSORS = re.compile(r"(?m)^. -{24} >8 -{24}$")
+COMMIT ="\x1emodrelease-commit\x1f"  # splits `git log -p` output; a blob would need these exact bytes to confuse it
 
 
 def config_dir() -> Path:
@@ -242,8 +243,9 @@ def run_hook(name: str, args: list[str]) -> int:
     if name == "pre-commit":
         problems = pending_identity(persona) + [f"the staged changes add {t!r}" for t in staged_added(needles)]
     elif name == "commit-msg":
-        msg = Path(args[0]).read_text("utf-8", "replace")
-        msg = "\n".join(line for line in msg.splitlines() if not line.startswith("#"))
+        # `git commit -v` puts the diff under a scissors line and git drops it: a commit that removes a leak must pass.
+        # Lines starting with # stay: with -m git keeps them ("#42 fixed").
+        msg = SCISSORS.split(Path(args[0]).read_text("utf-8", "replace"))[0]
         if persona.get("refuse_trailers", True) and TRAILER.search(msg):
             problems.append("the message has a Co-Authored-By or AI attribution line")
         problems += [f"the message contains {t!r}" for t in found(msg.encode(), needles)]

@@ -153,6 +153,16 @@ class CommitMsgTests(HookCase):
 
     def test_deny_list_in_message(self):
         self.refused(self.commit(self.r, msg="thanks Jane Roe"), "the message contains 'Jane Roe'")
+        self.refused(self.commit(self.r, msg="#42 thanks Jane Roe"), "'Jane Roe'")  # -m keeps lines starting with #
+
+    def test_verbose_commit_that_removes_a_leak(self):
+        self.commit(self.r, "by Jane Roe\n", "x", "--no-verify")
+        (self.r / "a.txt").write_text("by the author\n")
+        self.git("add", "-A", cwd=self.r)
+        editor = self.d / "editor.sh"  # writes a message above the template, like a person in an editor
+        editor.write_text('#!/bin/sh\n{ echo "remove the name"; cat "$1"; } > "$1.new" && mv "$1.new" "$1"\n', newline="\n")
+        r = self.git("commit", "-q", "-v", cwd=self.r, env={"GIT_EDITOR": f"sh '{editor.as_posix()}'"})
+        self.assertEqual(r.returncode, 0, r.stderr)  # the removed line sits in the diff under the scissors
 
 
 class ChainTests(GuardBase):
