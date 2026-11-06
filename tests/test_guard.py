@@ -239,6 +239,15 @@ class PrePushTests(GuardBase):
         r = self.push()
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_annotated_tag_with_foreign_tagger_refused(self):
+        self.commit(self.r)
+        self.git("-c", "user.name=alice", "-c", "user.email=alice@example.com", "tag", "-a", "v1", "-m", "v1",
+                 cwd=self.r, env={"TZ": "UTC-3"})
+        r = self.git("push", "-q", "origin", "v1", cwd=self.r)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("tag v1: tagger is alice <alice@example.com>", r.stderr)
+        self.assertIn("+0300", r.stderr)
+
     def test_chained_pre_push_gets_the_refs(self):
         hook = self.r / ".git" / "hooks" / "pre-push"
         hook.write_text("#!/bin/sh\ncat > refs.txt\n", newline="\n")
@@ -283,6 +292,21 @@ class CheckTests(GuardBase):
         self.git("commit", "-q", "--no-verify", "-m", "rename", cwd=r)
         code, out = self.run_check(r)
         self.assertIn("adds 'Jane Roe'", out)
+
+    def test_annotated_tags(self):
+        r = self.repo("alias/mod")
+        self.commit(r)
+        self.git("-c", "user.name=alice", "-c", "user.email=alice@example.com", "tag", "-a", "v1", "-m", "v1",
+                 cwd=r, env={"TZ": "UTC-3"})
+        self.git("tag", "-a", "v2", "-m", "thanks Jane Roe", cwd=r)
+        self.git("tag", "light", cwd=r)
+        code, out = self.run_check(r)
+        self.assertEqual(code, 1)
+        self.assertIn("tag v1: tagger is alice <alice@example.com>", out)
+        self.assertIn("tag v1: tagger date has the offset +0300", out)
+        self.assertIn("tag v2: 'Jane Roe' in the tagger or message", out)
+        self.assertNotIn("tag v2: tagger", out)
+        self.assertNotIn("light", out)
 
     def test_listed_word_inside_the_alias_name(self):
         self.config(deny='"alias"')

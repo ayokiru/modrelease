@@ -200,6 +200,28 @@ def audit(revs: list[str], persona: dict | None, needles, cwd=None) -> tuple[lis
     return problems, idents, offsets
 
 
+def tag_audit(sha: str, persona: dict | None, needles, cwd=None) -> tuple[list[str], set[str], set[str]]:
+    """An annotated tag keeps a tagger name, email and date of its own, apart from the commit's."""
+    head, _, msg = git("cat-file", "tag", sha, cwd=cwd).decode("utf-8", "replace").partition("\n\n")
+    fields = dict(line.split(" ", 1) for line in head.splitlines() if " " in line)
+    label = f"tag {fields.get('tag', sha[:7])}"
+    m = IDENT.match(fields.get("tagger", ""))  # very old tags have no tagger line
+    name, email, offset = m.groups() if m else ("", "", "")
+    problems = [f"{label}: {p}" for p in _identity_problems("tagger", name, email, offset, persona)] if m and persona else []
+    problems += [f"{label}: {t!r} in the tagger or message" for t in found(identity_text([name, email], persona, msg), needles)]
+    return problems, ({f"{name} <{email}>"} if m else set()), ({offset} if m else set())
+
+
+def all_tags(persona: dict | None, needles, cwd=None) -> tuple[list[str], set[str], set[str]]:
+    problems, idents, offsets = [], set(), set()
+    for line in git("for-each-ref", "--format=%(objectname) %(objecttype)", "refs/tags", cwd=cwd).decode().split("\n"):
+        sha, _, kind = line.partition(" ")
+        if kind == "tag":
+            p, i, o = tag_audit(sha, persona, needles, cwd)
+            problems, idents, offsets = problems + p, idents | i, offsets | o
+    return problems, idents, offsets
+
+
 def run_hook(name: str, args: list[str]) -> int:
     sys.stderr.reconfigure(errors="replace")  # a name the console code page lacks must not crash the hook
     cfg = load()
@@ -222,6 +244,8 @@ def run_hook(name: str, args: list[str]) -> int:
             parts = line.split()
             if len(parts) == 4 and parts[1] != ZERO:
                 problems += audit([parts[1], "--not", f"--remotes={remote}"], persona, needles)[0]
+                if parts[0].startswith("refs/tags/") and git("cat-file", "-t", parts[1]).strip() == b"tag":
+                    problems += tag_audit(parts[1], persona, needles)[0]
         hint = (f"\nOnly commits that are not on {remote} yet are checked. If these are other people's commits"
                 f" (a fresh fork), run `git fetch {remote}` and push again.")
     if problems:
@@ -321,7 +345,10 @@ def uninstall() -> int:
 def check(path: str) -> int:
     cfg = load()
     persona = persona_for(cfg, path)
-    problems, idents, offsets = audit(["--all"], persona, pack.term_needles(deny_terms(cfg, persona)), cwd=path)
+    needles = pack.term_needles(deny_terms(cfg, persona))
+    problems, idents, offsets = audit(["--all"], persona, needles, cwd=path)
+    p, i, o = all_tags(persona, needles, cwd=path)
+    problems, idents, offsets = problems + p, idents | i, offsets | o
     for p in problems:
         print(f"  ! {p}")
     print("identities: " + ", ".join(sorted(idents)))
