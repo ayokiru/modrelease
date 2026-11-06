@@ -284,6 +284,15 @@ class CheckTests(GuardBase):
         code, out = self.run_check(r)
         self.assertIn("adds 'Jane Roe'", out)
 
+    def test_listed_word_inside_the_alias_name(self):
+        self.config(deny='"alias"')
+        self.install()
+        r = self.repo("alias/mod")
+        self.assertEqual(self.commit(r).returncode, 0)  # the persona's own name in the commit is fine
+        self.assertEqual(self.run_check(r)[0], 0)
+        res = self.commit(r, "a new alias\n")
+        self.assertIn("'alias'", res.stderr)  # anywhere else the word is still refused
+
     def test_clean_history(self):
         r = self.repo("alias/mod")
         self.commit(r)
@@ -307,11 +316,22 @@ class ConfigTests(GuardBase):
             guard.load()
 
     def test_deny_terms(self):
-        cfg = {"deny": ["Jane Roe", "myalias"], "persona": []}
-        terms = guard.deny_terms(cfg, {"name": ALIAS, "email": EMAIL})
-        self.assertIn("Jane Roe", terms)
+        self.git("config", "--global", "user.name", "Jane Roe", cwd=self.d)
+        terms = guard.deny_terms({"deny": ["alias"], "persona": []}, {"name": ALIAS, "email": EMAIL})
+        self.assertIn("alias", terms)  # listed, even though it is part of the persona's name
+        self.assertIn("Jane Roe", terms)  # the global git identity, through pack.personal_terms
         self.assertIn(getpass.getuser(), terms)
-        self.assertNotIn("myalias", terms)  # the persona's own name is never denied
+        self.assertIn(Path.home().as_posix(), terms)
+
+    def test_generic_login_and_own_identity_are_not_automatic_terms(self):
+        self.git("config", "--global", "user.name", ALIAS, cwd=self.d)  # the global identity is the alias itself
+        with mock.patch("getpass.getuser", return_value="User"), \
+                mock.patch("pathlib.Path.home", return_value=Path("/home/Administrator")):
+            terms = [t.lower() for t in guard.deny_terms({"deny": ["Admin"], "persona": []}, {"name": ALIAS, "email": EMAIL})]
+        self.assertNotIn("user", terms)
+        self.assertNotIn("administrator", terms)
+        self.assertNotIn(ALIAS, terms)
+        self.assertIn("admin", terms)  # listed by hand, so it stays
 
     def test_deepest_persona_wins(self):
         cfg = {"persona": [{"path": str(self.d), "name": "a"}, {"path": str(self.d / "x"), "name": "b"}]}

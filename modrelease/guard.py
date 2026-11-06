@@ -1,7 +1,6 @@
 """Git identity guard for a public alias: per-folder personas, a deny list, hooks and a history audit."""
 from __future__ import annotations
 
-import getpass
 import io
 import json
 import os
@@ -24,6 +23,8 @@ STDIN_HOOKS = {"pre-push", "post-rewrite", "reference-transaction"}
 TOP_KEYS = {"deny", "persona"}
 PERSONA_KEYS = {"path", "name", "email", "utc", "refuse_trailers"}
 ZERO = "0" * 40
+# Windows default and shared accounts: as automatic terms they would block code like `def get(user):`
+GENERIC = {d.decode() for d in pack.SHARED_USER_DIRS} | {"user", "admin", "owner", "administrator"}
 IDENT = re.compile(r"^(.*) <(.*)> \d+ ([+-]\d{4})$")
 TRAILER = re.compile(r"(?im)^(?:co-authored-by|generated-by|assisted-by|ai-assisted|made-with)\s*:"
                      r"|generated (?:with|by) \S*\s*(?:claude|chatgpt|copilot|cursor|codex|gemini|aider)"
@@ -54,16 +55,23 @@ def load(path: Path | None = None) -> dict:
 
 
 def deny_terms(cfg: dict, persona: dict | None = None) -> list[str]:
-    """The deny list plus this PC's login and home folder; never a part of the persona's own name or email."""
+    """The deny list plus what pack checks for (login, PC name, global git identity) and the home path. A found term
+    that is a generic login ("User") or the persona's own name or email is dropped; listed terms always stay."""
     home = Path.home()
-    auto = [] if os.environ.get("CI") else [getpass.getuser(), home.name, str(home), home.as_posix()]
-    own = f"{persona['name']} {persona['email']}".lower() if persona else ""
-    seen, out = set(), []
-    for t in [*cfg["deny"], *auto]:
-        if len(t) >= 3 and t.lower() not in seen and t.lower() not in own:
-            seen.add(t.lower())
-            out.append(t)
-    return out
+    paths = [] if os.environ.get("CI") else [str(home), home.as_posix()]
+    listed = {t.lower() for t in cfg["deny"]}
+    skip = GENERIC | (_own(persona) if persona else set())
+    return [t for t in pack.personal_terms([*cfg["deny"], *paths]) if t.lower() in listed or t.lower() not in skip]
+
+
+def _own(persona: dict) -> set[str]:
+    return {persona["name"].lower(), persona["email"].lower()}
+
+
+def identity_text(parts: list[str], persona: dict | None, msg: str = "") -> bytes:
+    """Names and emails to search for deny-list terms, minus the persona's own (its name may contain a listed word)."""
+    own = _own(persona) if persona else set()
+    return (" ".join(p for p in parts if p.lower() not in own) + "\n" + msg).encode()
 
 
 def _norm(p) -> str:
@@ -185,7 +193,7 @@ def audit(revs: list[str], persona: dict | None, needles, cwd=None) -> tuple[lis
         if persona:
             problems += [f"{h}: {p}" for p in _identity_problems("author", an, ae, ad[-5:], persona)
                          + _identity_problems("committer", cn, ce, cd[-5:], persona)]
-        for t in found(f"{an} {ae} {cn} {ce}\n{msg}".encode(), needles):
+        for t in found(identity_text([an, ae, cn, ce], persona, msg), needles):
             problems.append(f"{h}: {t!r} in the author, committer or message")
         for t in terms:
             problems.append(f"{h}: adds {t!r}")
