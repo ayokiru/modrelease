@@ -15,6 +15,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
   <a href="#commands">Commands</a> &nbsp;·&nbsp;
+  <a href="#guard-your-alias-in-git">Git guard</a> &nbsp;·&nbsp;
   <a href="#modreleasetoml">Config</a> &nbsp;·&nbsp;
   <a href="#github-action">GitHub Action</a> &nbsp;·&nbsp;
   <a href="#limits">Limits</a> &nbsp;·&nbsp;
@@ -88,6 +89,7 @@ videos also need `ffmpeg` on PATH.
 | [`vt`](#vt) | The VirusTotal result for a file, and which engines flag it |
 | [`nexus`](#nexus) | Uploads the zip as a new version of a file on Nexus Mods |
 | [`appeal`](#appeal) | Writes the email that gets a quarantined Nexus file reviewed |
+| [`guard`](#guard-your-alias-in-git) | Git hooks that keep your real name, email and time zone out of your alias's commits |
 
 ### check
 
@@ -200,6 +202,62 @@ Prints the email for `support@nexusmods.com`: the file, the VirusTotal result wi
 flag it, the programs in the archive, the source link and your build steps. Send it from the address on your
 Nexus account.
 
+## Guard your alias in git
+
+Every git commit stores a name, an email and the time with your UTC offset, and all three go public with the repo.
+One commit made with your work email still in the global config puts your real name in the alias's history for
+good, and the offset narrows down where you live. AI coding agents add one more way in: an agent can run
+`git -c user.email=... commit` or pass `--author`, and whatever you set in the repo config no longer counts.
+
+`modrelease guard` ties folders to identities and installs git hooks that check every commit made in them. Put the
+settings in `~/.config/modrelease/guard.toml` (on Windows that is `%USERPROFILE%\.config\modrelease\guard.toml`,
+and `MODRELEASE_CONFIG_DIR` moves the folder):
+
+```toml
+deny = ["My Real Name", "me@example.com"]
+
+[[persona]]
+path = "~/alias-projects"
+name = "myalias"
+email = "123+myalias@users.noreply.github.com"
+utc = true
+```
+
+Then write the hooks:
+
+```
+modrelease guard install
+```
+
+They go to `~/.config/modrelease/hooks`, and install prints the git command that turns them on
+(`git config --global core.hooksPath ...`). Your git config stays as it is until you run that command or
+`modrelease guard install --apply`.
+
+In a repo under a persona's `path` the hooks refuse:
+
+| Hook | What it refuses |
+|---|---|
+| pre-commit | an author or committer that is not the persona (set by the config, `-c`, `--author` or `GIT_AUTHOR_*`), a date that is not +0000 when `utc = true`, staged lines that add a string from the deny list |
+| commit-msg | `Co-Authored-By` and "Generated with" lines from AI tools (`refuse_trailers = false` allows them), deny list strings in the message |
+| pre-push | any of the above in the commits the remote does not have yet |
+
+The deny list always includes your login and home folder on this PC, in any letter case and in UTF-16 as well.
+To commit in UTC, run `TZ=UTC git commit ...` in bash, or set `$env:TZ = "UTC"` once in PowerShell.
+
+Outside persona folders the hooks check nothing. A global `core.hooksPath` hides each repo's own `.git/hooks`, so
+the guard runs those after its checks, or the hooks from your previous global `core.hooksPath` if you had one.
+`modrelease guard uninstall` deletes the hooks and puts the old `core.hooksPath` back, but only if `--apply` was
+what changed it.
+
+Before you make an old repo public, look at its history:
+
+```
+modrelease guard check path/to/repo
+```
+
+It reads every commit on every branch, lists deny list strings, other identities and time zones, and changes
+nothing. Outside a persona folder it lists the identities and time zones it found and leaves the judging to you.
+
 ## modrelease.toml
 
 Put the settings next to your mod and a release is `modrelease pack` and `modrelease nexus`. Paths are relative to
@@ -267,6 +325,10 @@ for there.
   check those findings and pack with `--force`.
 - Tokens are found by their known shapes. A password typed into a config file has no shape, so read your configs.
 - H.265 videos lose their HDR metadata in `clean`, since it sits in the same kind of block as the encoder settings.
+- `git commit --no-verify` skips the guard hooks, and a repo that sets its own `core.hooksPath` (husky does) never
+  runs them. The hooks call the Python modrelease was installed with, so run `guard install` again if that moves.
+- In a fresh clone of a fork, pre-push counts the upstream commits as new until `git fetch` brings in the remote
+  branches.
 
 </details>
 

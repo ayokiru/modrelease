@@ -20,6 +20,7 @@ modrelease pack MyMod/ -o MyMod-1.0.zip
 | `vt` | The VirusTotal result for a file, and which engines flag it |
 | `nexus` | Uploads the zip as a new version of a file on Nexus Mods |
 | `appeal` | Writes the email that gets a quarantined Nexus file reviewed |
+| `guard` | Git hooks that keep your real name, email and time zone out of your alias's commits |
 
 Settings can live in a `modrelease.toml` next to the mod, and there is a GitHub Action for releases on every tag.
 The full guide, a demo and the source are on [GitHub](https://github.com/ayokiru/modrelease).
