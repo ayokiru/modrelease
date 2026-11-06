@@ -250,21 +250,21 @@ def run_hook(name: str, args: list[str]) -> int:
             problems.append("the message has a Co-Authored-By or AI attribution line")
         problems += [f"the message contains {t!r}" for t in found(msg.encode(), needles)]
     else:
-        remote = args[0] if args else "origin"
         for line in sys.stdin.read().splitlines():
             parts = line.split()
-            if len(parts) == 4 and parts[1] != ZERO:
-                problems += audit([parts[1], "--not", f"--remotes={remote}"], persona, needles)[0]
+            if len(parts) == 4 and parts[1] != ZERO:  # a zero sha deletes the branch or tag: nothing to check
+                # commits any remote branch has are known: merging upstream must not refuse upstream's authors
+                problems += audit([parts[1], "--not", "--remotes"], persona, needles)[0]
                 if parts[0].startswith("refs/tags/") and git("cat-file", "-t", parts[1]).strip() == b"tag":
                     problems += tag_audit(parts[1], persona, needles)[0]
-        hint = (f"\nOnly commits that are not on {remote} yet are checked. If these are other people's commits"
-                f" (a fresh fork), run `git fetch {remote}` and push again.")
+        hint = ("Only commits that no remote branch here has yet are checked. If these are other people's commits,"
+                " `git fetch` the remote they came from, or push once with `git push --no-verify`.")
     if problems:
         print(f"{PREFIX} {name} refused in {persona['name']}'s folder:", file=sys.stderr)
         for p in dict.fromkeys(problems):
             print(f"  ! {p}", file=sys.stderr)
         if hint:
-            print(hint.strip("\n"), file=sys.stderr)
+            print(hint, file=sys.stderr)
         return 1
     return 0
 

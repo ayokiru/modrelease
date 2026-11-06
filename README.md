@@ -239,7 +239,7 @@ In a repo under a persona's `path` the hooks refuse:
 |---|---|
 | pre-commit | an author or committer that is not the persona (set by the config, `-c`, `--author` or `GIT_AUTHOR_*`), a date that is not +0000 when `utc = true`, staged lines that add a string from the deny list |
 | commit-msg | `Co-Authored-By` and "Generated with" lines from AI tools (`refuse_trailers = false` allows them), deny list strings in the message |
-| pre-push | any of the above in the commits the remote does not have yet |
+| pre-push | any of the above in commits that no remote branch in your clone has yet, and in annotated tags |
 
 The deny list always includes your login and home folder on this PC, in any letter case and in UTF-16 as well.
 To commit in UTC, run `TZ=UTC git commit ...` in bash, or set `$env:TZ = "UTC"` once in PowerShell.
@@ -327,8 +327,9 @@ for there.
 - H.265 videos lose their HDR metadata in `clean`, since it sits in the same kind of block as the encoder settings.
 - `git commit --no-verify` skips the guard hooks, and a repo that sets its own `core.hooksPath` (husky does) never
   runs them. The hooks call the Python modrelease was installed with, so run `guard install` again if that moves.
-- In a fresh clone of a fork, pre-push counts the upstream commits as new until `git fetch` brings in the remote
-  branches.
+- pre-push counts a commit as new until a remote branch in your clone has it. Other people's commits that came
+  in another way (a patch, a remote you removed) are refused until you `git fetch` their remote, or push once with
+  `git push --no-verify`.
 
 </details>
 

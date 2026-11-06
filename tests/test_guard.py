@@ -242,7 +242,28 @@ class PrePushTests(GuardBase):
         r = self.push()
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("author is alice <alice@example.com>", r.stderr)
-        self.assertIn("git fetch origin", r.stderr)
+        self.assertIn("git push --no-verify", r.stderr)
+
+    def test_merged_upstream_commits_are_known(self):
+        self.git("init", "-q", "--bare", str(self.d / "upstream.git"), cwd=self.d)
+        up = self.repo("work/up", "alice", "alice@example.com")
+        self.commit(up, env={"TZ": "UTC-3"})
+        self.git("push", "-q", str(self.d / "upstream.git"), "main", cwd=up)
+        self.commit(self.r)
+        self.git("remote", "add", "upstream", str(self.d / "upstream.git"), cwd=self.r)
+        self.git("fetch", "-q", "upstream", cwd=self.r)
+        m = self.git("merge", "-q", "--allow-unrelated-histories", "-m", "merge upstream", "upstream/main", cwd=self.r)
+        self.assertEqual(m.returncode, 0, m.stderr)
+        r = self.push()  # alice's commit is on upstream/main, so it is not this persona's to answer for
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_deleting_a_branch_or_tag(self):
+        self.commit(self.r)
+        self.git("tag", "-a", "v1", "-m", "v1", cwd=self.r)
+        self.assertEqual(self.git("push", "-q", "origin", "main", "main:feature", "v1", cwd=self.r).returncode, 0)
+        for ref in (":feature", ":refs/tags/v1"):
+            r = self.git("push", "-q", "origin", ref, cwd=self.r)
+            self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_local_dates_refused(self):
         self.commit(self.r, "x\n", "x", "--no-verify", env={"TZ": "UTC-3"})
