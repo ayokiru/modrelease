@@ -241,7 +241,9 @@ In a repo under a persona's `path` the hooks refuse:
 | commit-msg | `Co-Authored-By` and "Generated with" lines from AI tools (`refuse_trailers = false` allows them), deny list strings in the message |
 | pre-push | any of the above in commits that no remote branch in your clone has yet, and in annotated tags |
 
-The deny list always includes your login and home folder on this PC, in any letter case and in UTF-16 as well.
+The deny list always includes your login, home folder and PC name and the name and email from your global git
+config, unless one of them is the alias itself or a stock Windows account like `User` or `Admin`. It matches in any
+letter case and in UTF-16 as well. A git worktree outside the alias folder is guarded like the repo it came from.
 To commit in UTC, run `TZ=UTC git commit ...` in bash, or set `$env:TZ = "UTC"` once in PowerShell.
 
 Outside persona folders the hooks check nothing. A global `core.hooksPath` hides each repo's own `.git/hooks`, so
@@ -255,8 +257,8 @@ Before you make an old repo public, look at its history:
 modrelease guard check path/to/repo
 ```
 
-It reads every commit on every branch, lists deny list strings, other identities and time zones, and changes
-nothing. Outside a persona folder it lists the identities and time zones it found and leaves the judging to you.
+It reads every commit on every branch and every annotated tag, lists deny list strings, other identities and
+time zones, and changes nothing. Outside a persona folder it lists the identities and time zones it found and leaves the judging to you.
 
 ## modrelease.toml
 
